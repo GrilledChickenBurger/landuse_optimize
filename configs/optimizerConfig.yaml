@@ -1,0 +1,65 @@
+# 随机优化算法运行配置文件
+device:
+  use_gpu: false
+
+data:
+  root: "_data\\optimize_data"
+  shape: [1, 128, 128]  # [通道数, 高度, 宽度]
+  factor_list: ["DEM", "DL", "GDP", "RK"]  # 驱动因子列表
+  es_list: ["RAIN", "NJW", "ZSL", "PODU", "WATER", "CITY", "GD"]  # 生态系统服务数据列表
+  year: "10"  # 基准年份
+  lu_labels: [0, 11, 12, 21, 22, 23, 24, 31, 32, 33, 41, 42, 43, 45, 46, 51, 52, 53, 65, 66]
+  maxent_model_path: "checkpoints\\maxent-model_sklearn_{year}.ela"  # maxent模型路径
+  shuffle: false  # 是否打乱数据
+  batch_size: 1  # 批次大小
+
+model:
+  type: "segformer"  # 模型类型，目前支持 "attunet, unet, segformer"
+  segformer:
+    dims: [32, 64, 160, 256]
+    heads: [1, 2, 5, 8]
+    ff_expansion: [4,4,4,4]
+    reduction_ratio: [8,4,2,1]
+    num_layers: 2
+    decoder_dim: 128
+  transunet:
+    img_dim: 128
+    out_channels: 32
+    head_num: 4
+    mlp_dim: 512
+    block_num: 4
+    patch_dim: 16
+
+optimizer:
+  type: "SA"  # 优化器类型，目前支持 "SA" (模拟退火)
+  use_landscape: true  # 是否使用景观破碎化约束
+  optimize_num: 3  # 优化样本数量
+  scenario: "all"  # scenario类型: ["default", "enterprise", "farmer", "tourist"], all表示所有scenario
+  weight:  # 不同scenario对应的权重配置
+    default: {'food': 0.25, 'carbon': 0.25, 'water': 0.25, 'culture': 0.25}
+    enterprise: {'food':0.0, 'carbon':0.5, 'water':0.5, 'culture':0.0}
+    farmer: {'food':0.8, 'carbon':0.1, 'water':0.1, 'culture':0.0}
+    # tourist: {'food':0.0, 'carbon':0.1, 'water':0.2, 'culture':0.7}
+    tourist: {'food':0.0, 'carbon':0.0, 'water':0.0, 'culture':1.0}
+
+ 
+
+SA:  # 模拟退火参数
+  T_start: 100  # 初始温度
+  T_end: 0.1  # 终止温度
+  cooling_rate: 0.9995  # 降温率
+
+  carbon_pool_path: "libs\\carbon_pool.csv"  # 碳库数据路径
+  maxent_model_path: "checkpoints\\maxent-model_sklearn_{year}.ela"  # maxent模型路径, 需与data.maxent_model_path一致
+  frg_model_path: "libs\\frg_model.fca"  # 破碎化模型路径
+  ANN_model_path: "checkpoints\\segformer_best_260213.pth"  # 预训练模型路径
+  # ES_list: ["RAIN", "NJW", "ZSL", "PODU", "WATER", "CITY", "GD"]
+  # ES_1: ['RAIN','NJW','PODU','WATER','CITY','GD']
+  # ES_2: ['RAIN','ZSL']
+  maxent_list: ['CITY','DL','LU','PODU','WATER'] # Maxent模型输入变量
+  performance: true  # 是否记录性能指标
+  save_path: "results\\SA"  # 结果保存目录
+
+output:
+  save_result: false  # 是否保存优化结果
+  save_path: "results\\optimize_data"  # 结果保存目录

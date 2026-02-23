@@ -1,0 +1,358 @@
+# 通用工具函数
+
+import os
+import yaml
+from typing import Any, Dict, List, Optional, Tuple, Union
+import argparse
+import rasterio
+import numpy as np
+import cv2
+import torch
+import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
+
+def ensure_folder(folder: str) -> None:
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+
+def get_yaml(path: str) -> argparse.Namespace:
+    with open(path,encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+    config = get_namespace(config)
+    return config
+    
+def get_namespace(config_dict: Dict) -> argparse.Namespace:
+    config = argparse.Namespace()
+    for key, value in config_dict.items():
+        if isinstance(value, dict):
+            value_new = get_namespace(value)  # Recursively convert to Namespace
+        else:
+            value_new = value
+        setattr(config, key, value_new)
+    return config
+
+
+
+def convert_to_nparray(array: Any) -> Optional[np.ndarray]:  
+    """
+    将输入转换为numpy数组.\n
+    Parameters:
+    ----------
+        array: 输入张量或numpy数组
+
+    Returns:
+    ----------
+        numpy数组
+    """  
+    if isinstance(array, np.ndarray):  
+        return array  
+    elif hasattr(array, 'numpy') and callable(getattr(array, 'numpy')):   
+        return array.numpy()  
+    elif isinstance(array, torch.Tensor):  
+        return array.detach().cpu().numpy() 
+    else:  
+        print("错误：输入不是张量或numpy数组")  
+        return None  
+
+
+def draw_single_line(x_data: List[float], y_data: List[float],
+                    label: str, x_label: str, y_label: str, 
+                    title: Optional[str] = None, 
+                    save_path: Optional[str] = None):
+    """
+    绘制只有一组数据的折线图。
+    Parameters:
+        x_data: List[float], 数据
+        y_data: List[float], 数据
+        label: str, 标签
+        x_label: str, x轴标签
+        y_label: str, y轴标签
+        title: str, 标题
+        save_path: str, 保存路径
+    """
+    plt.figure(figsize=(40,20))
+    plt.plot(x_data, y_data, label=label, linewidth=4)
+    plt.xlabel(x_label, fontsize = 24)
+    plt.ylabel(y_label, fontsize = 24)
+    plt.title(title if title is not None else "Result", fontsize = 30)
+    plt.tick_params(labelsize=20)     #调整坐标轴数字大小
+    plt.legend(prop = {'size':20})
+    plt.grid(True)
+    
+    if save_path is not None:
+        plt.savefig(save_path)
+    plt.close()
+
+def draw_multi_line(x_data: List[float], y_datas: List[List[float]], 
+                    labels: List[str], x_label: str, y_label: str, 
+                    title: Optional[str] = None, 
+                    save_path: Optional[str] = None):
+    """
+    绘制多组数据的折线图。
+    Parameters:
+        x_data: List[float], 数据
+        y_datas: List[List[float]], 数据
+        labels: List[str], 标签
+        x_label: str, x轴标签
+        y_label: str, y轴标签
+        title: str, 标题
+        save_path: str, 保存路径
+    """
+    plt.figure(figsize=(40,20))
+    for y_data, label in zip(y_datas, labels):
+        plt.plot(x_data, y_data, label=label, linewidth=4)
+    plt.xlabel(x_label, fontsize = 24)
+    plt.ylabel(y_label, fontsize = 24)
+    plt.title(title if title is not None else "Result", fontsize = 30)
+    plt.tick_params(labelsize=20)     #调整坐标轴数字大小
+    plt.legend(prop = {'size':20})
+    plt.grid(True)
+    
+    if save_path is not None:
+        plt.savefig(save_path)
+    plt.close()
+
+def show_array_result(array: Any, title: Optional[str] = None, label: Optional[str] = None) -> None:
+    """
+    可视化二维数组类型的结果。\n
+    Parameters:
+    ----------
+        array: ndarray
+        title: str, 标题
+        label: str, 标签
+    """
+    array_np= convert_to_nparray(array)
+    fig, ax = plt.subplots(1, 1, figsize=(7, 6), dpi=100)
+    plot = ax.imshow(array_np.squeeze(), cmap='GnBu',vmin=array_np.min(), vmax=array_np.max())
+    ax.set_title(title if title is not None else "Result")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    cbar = plt.colorbar(plot, ax=ax, label=label if label is not None else "Value", pad=0.04)
+    plt.tight_layout()
+    plt.show()
+
+def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor], main_title: str = 'Tensor Visualization',
+                        save_path: str = None, color_map: Union[Dict[Any, Tuple[float, float, float]], str] = None, figsize: Tuple[int, int] = None, layout: Tuple[int, int] = None) -> List[str]:
+    """
+    通用张量可视化函数，支持自定义颜色映射和图像布局配置。
+    
+    Parameters:
+    ----------
+        tensor_dict: Dict[str, torch.Tensor], 张量字典, 格式为
+            {'subtitle1': tensor1, 'subtitle2': tensor2, ...}
+            每个张量可以是 [1, 1, height, width]、[1, height, width] 或 [height, width] 格式
+        main_title: str, 可视化窗口的主标题，默认值为 'Tensor Visualization'
+        save_path: str, 保存图像的路径，默认不保存
+        color_map: dict, 自定义颜色映射字典，格式为 {value: (r, g, b)}，其中r, g, b的范围为0-1
+        figsize: tuple, 图像大小，格式为 (width, height)，默认根据张量数量自动计算
+        layout: tuple, 子图布局，格式为 (rows, cols)，默认自动计算
+    
+    Returns:
+    -------
+        List[str]: 保存的文件路径列表（如果指定了save_path）
+    """   
+    if not tensor_dict:
+        raise ValueError("张量字典不能为空")
+    
+    # 处理张量形状，确保为2D
+    processed_tensors = {}
+    for name, tensor in tensor_dict.items():
+        processed_tensor = tensor.cpu().squeeze()  # 移到CPU，压缩所有尺寸为1的维度
+        if len(processed_tensor.shape) != 2:
+            raise ValueError(f"张量 '{name}' 处理后形状应为 [height, width]，当前形状：{processed_tensor.shape}")
+        processed_tensors[name] = convert_to_nparray(processed_tensor)  # 转换为numpy数组
+    
+    saved_paths = []  
+    # 计算子图布局
+    num_tensors = len(processed_tensors)
+    if layout is None:
+        # 根据张量数量自动确定布局
+        if num_tensors <= 4:
+            rows, cols = 1, num_tensors
+        elif num_tensors <= 6:
+            rows, cols = 2, 3
+        elif num_tensors <= 9:
+            rows, cols = 3, 3
+        else:
+            # 对于更多张量，使用尽量方形的布局
+            cols = int(np.ceil(np.sqrt(num_tensors)))
+            rows = int(np.ceil(num_tensors / cols))
+    else:
+        rows, cols = layout
+    
+    # 计算图像大小
+    if figsize is None:
+        # 根据布局自动计算合适的图像大小
+        base_size = 5
+        figsize = (cols * base_size, rows * base_size)
+    
+    # 限制图像大小以避免超过matplotlib的限制
+    max_figsize = 50  # 限制最大图像尺寸
+    if figsize[0] > max_figsize or figsize[1] > max_figsize:
+        scale_factor = max_figsize / max(figsize)
+        figsize = (figsize[0] * scale_factor, figsize[1] * scale_factor)
+        print(f"警告: 图像尺寸过大，已调整为 {figsize}")
+    
+    # 创建图像和子图
+    fig, axes = plt.subplots(rows, cols, figsize=figsize)
+    if rows == 1 and cols == 1:
+        axes = [axes]  # 确保axes是列表
+    elif rows == 1 or cols == 1:
+        axes = axes.flatten()  # 一维数组
+    else:
+        axes = axes.flatten()  # 二维数组展平
+    
+    # 设置主标题
+    if main_title:
+        fig.text(0.1, 0.9, main_title, ha='left', va='baseline', fontsize=16, color='black', fontweight='bold')  
+        # fig.suptitle(main_title, fontsize=16, fontweight='bold')
+    # 绘制每个张量
+    for i, (title, nparr) in enumerate(processed_tensors.items()):
+            ax = axes[i]
+            # 使用自定义颜色映射或默认颜色映射
+            if isinstance(color_map, dict):                
+                # 获取张量中的唯一值
+                unique_values = np.unique(nparr)
+                
+                # 创建颜色映射数组
+                cmap_values = []
+                for val in unique_values:
+                    if val in color_map:
+                        cmap_values.append(color_map[val])
+                    else:
+                        # 对于没有在color_map中定义的值，使用灰色
+                        cmap_values.append((0.5, 0.5, 0.5))
+                
+                # 创建自定义颜色映射
+                custom_cmap = ListedColormap(cmap_values)
+                
+                # 将原始张量数据映射到新的索引
+                mapped_data = np.zeros_like(nparr, dtype=int)
+                for idx, val in enumerate(unique_values):
+                    mapped_data[nparr == val] = idx
+                
+                # 绘制热图
+                im = ax.imshow(mapped_data, cmap=custom_cmap)
+                
+                # 添加颜色条并自定义标签
+                cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                cbar.set_ticks(range(len(unique_values)))
+                cbar.set_ticklabels([str(int(v)) if isinstance(v, (int, np.integer)) else str(v) for v in unique_values])
+            elif isinstance(color_map, str):
+                # 使用默认颜色映射
+                im = ax.imshow(nparr, cmap=color_map)
+                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            else:
+                # 使用默认颜色映射
+                im = ax.imshow(nparr, cmap='viridis')
+                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            
+            # 设置标题
+            ax.set_title(title)
+            ax.axis('off')  # 关闭坐标轴
+    
+    # 隐藏多余的子图
+    for i in range(num_tensors, len(axes)):
+        axes[i].axis('off')
+    
+    if main_title:
+        plt.subplots_adjust(top=0.9)
+    
+    # 保存图像
+    if save_path:
+        # 确保目录存在
+        save_dir = os.path.dirname(save_path)
+        if save_dir and not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        
+        # 限制DPI以避免超过matplotlib的尺寸限制
+        plt.savefig(save_path, dpi=min(150, 300), bbox_inches='tight')  # 降低DPI避免尺寸过大
+        saved_paths.append(save_path)
+    
+    plt.close()
+    return saved_paths
+
+
+def get_video_from_imgs(src_folder,video_folder):
+    """
+    从src_folder中读取所有图片，生成视频并保存到video_folder中。
+    视频文件名格式为：output_video.mp4
+    """
+    print("================= 生成视频中... =================")
+
+    # src_folder里所有图片的路径
+    allvalimg_path = [f"{src_folder}\\{filename}" for filename in os.listdir(src_folder)]
+
+    # "SA\results\run_240611_231924\history"
+    frame_num=len(allvalimg_path)
+    print(f"共{frame_num}帧图片, 生成视频中...")
+
+    # 自定义排序函数  
+    def epoch_sort_key(file_path):  
+        """Extract the step number from the file path."""
+        # Split the file path into parts
+        parts = file_path.split('/')
+        # Get the last part (the file name), remove the extension, and split at '_'
+        filename_parts = parts[-1].replace('.png', '').split('_')
+        # Get the last part (the step number) and convert it to an integer
+        step_num = int(filename_parts[-1])
+        return step_num
+
+    img_path = sorted([f for f in allvalimg_path],
+                        key=epoch_sort_key)
+    assert len(img_path)==frame_num
+
+    cv2.setNumThreads(0)  #设置opencv不使用多进程运行，但这条命令只在本作用域有效。
+    cv2.ocl.setUseOpenCL(False)   #设置opencv不使用多进程运行，但这条命令只在本作用域有效。
+
+    # 读取第一张图片以获取视频尺寸
+    frame0 = cv2.imread(img_path[0])
+    height, width, layers = frame0.shape
+
+    fps = frame_num // 10
+    # 保存动画为视频文件  
+    ensure_folder(video_folder)
+    video_name = f'output_video.mp4'  
+    # 定义视频编解码器并创建 VideoWriter 对象
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # 编解码器
+    video = cv2.VideoWriter(f'{video_folder}/{video_name}', fourcc, fps, (width, height))
+
+    for img_file in img_path:
+        frame = cv2.imread(img_file)
+        video.write(frame)
+        del frame
+
+    video.release()
+    print(f"Done. The video has been saved to {video_folder}.\n")
+
+
+def save_tif(plan, output_folder, output_filename):  
+    """
+    保存张量为TIFF文件.
+    Parameters:
+        plan: 编辑后的张量，需转换为numpy数组  
+        output_folder: 保存文件的文件夹位置  
+        output_filename: 输出文件名  
+    """
+    ensure_folder(output_folder)
+    output_path = os.path.join(output_folder, output_filename)  
+  
+    # 获取张量的形状和数据类型  
+    plan_np = convert_to_nparray(plan)
+    _, _, height, width = plan_np.shape 
+  
+    # 创建transform（使用默认的地理参考）
+    transform = from_origin(0, 0, 1, 1)
+  
+    # 使用rasterio创建TIFF文件
+    with rasterio.open(
+        output_path, 'w',
+        driver='GTiff',
+        height=height,
+        width=width,
+        count=1,
+        dtype=plan_np.dtype,
+        crs='+proj=latlong',
+        transform=transform
+    ) as dst:
+        dst.write(plan_np[0, 0, :, :], 1)

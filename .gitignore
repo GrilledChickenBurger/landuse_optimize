@@ -1,0 +1,48 @@
+# 数据文件夹
+_data/
+
+# Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 日志文件
+logs/
+*.log
+
+# 检查点和模型文件
+checkpoints/
+
+# 结果文件
+results/
+
+# IDE配置文件
+.vscode/
+.idea/
+
+# 临时文件
+*.tmp
+*.temp
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 环境文件
+.env
+.env.local
+.env.production
+
+# 大型数据文件
+*.tif
+*.tiff
+*.geotiff
+*.h5
+*.hdf5
+*.npy
+*.npz
+
+# 压缩文件
+*.zip
+*.tar.gz
+*.rar

@@ -1,0 +1,70 @@
+# 变化预测模型训练配置文件
+device:
+  use_gpu: true
+
+
+# 数据配置, 通用
+data:
+  root: "_data\\training_data"
+  split: "train"  # train|val, 训练集或验证集
+  shape: [1, 128, 128]  # [通道数, 高度, 宽度]
+  factor_list: ["DEM", "DL", "GDP", "RK"]  # 驱动因子列表
+  pack: [[10,15]]  # 训练数据时间范围，每个子列表为[start_year, end_year], [-1,-1]表示全部时间范围
+  lu_labels: [11, 12, 21, 22, 23, 24, 31, 32, 33, 41, 42, 43, 45, 46, 51, 52, 53, 65, 66]
+  shuffle: true  # 是否打乱数据
+  normalize: true  # 是否归一化数据
+  batch_size: 8  # 批次大小
+  only_changed: false  # 是否仅使用有变化的样本
+
+training:
+  model_name: 'transunet'    # attunet, unet, fcn, segformer, transunet
+  save_frequency: 20  # 每n个epoch保存一次模型参数
+  print_frequency: 50  # 每n个batch打印一次损失
+  visualize_frequency: 200  # 每n个batch可视化一次输出
+
+  num_epochs: 100
+  is_tensorboard: true
+  log_frequency: 4  # tensorboard日志记录频率（每多少个batch）
+  log_dir: "logs\\{model_name}\\{run_timestamp}"  # tensorboard日志保存路径
+  checkpoint_dir: "checkpoints\\{model_name}\\{run_timestamp}"  # checkpoint保存路径
+
+optimizer: # 优化器配置
+  default:
+    name: 'adam'  # adam, sgd, rmsprop
+    learning_rate: 0.0001
+    weight_decay: 0.00001
+    beta_1: 0.9
+    amsgrad: false
+    epsilon: 0.00000001
+    gradient_clip: 1.0
+  segformer:
+    name: 'adamw'
+    learning_rate: 0.00005
+    weight_decay: 0.0001
+    beta_1: 0.9
+    amsgrad: false
+    epsilon: 0.00000001
+    gradient_clip: 1.0 
+
+validation:
+  split: "val"  # train|valid, 训练集或验证集
+  pack: [[10,15]]  # 验证数据时间范围，每个子列表为[start_year, end_year], [-1,-1]表示全部时间范围
+  batch_size: 8  # 批次大小
+  shuffle: false  # 是否打乱数据
+
+model:
+  segformer:
+    dims: [32, 64, 160, 256]
+    heads: [1, 2, 5, 8]
+    ff_expansion: [4,4,4,4]
+    reduction_ratio: [8,4,2,1]
+    num_layers: 2
+    decoder_dim: 128
+
+  transunet:
+    img_dim: 128
+    out_channels: 32
+    head_num: 4
+    mlp_dim: 512
+    block_num: 4
+    patch_dim: 16
