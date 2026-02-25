@@ -159,7 +159,7 @@ def training_pipeline(config_path: str, checkpoint_path: str = None) -> None:
             if tensorboard_step % train_config.visualize_frequency == 0:
                 visualize_outputs(outputs, diff, 
                                 epoch, tensorboard_step, 
-                                save_path=f"{log_dir}\\epoch_{epoch+1}_step_{tensorboard_step}.png")
+                                save_path=os.path.join(log_dir, f"epoch_{epoch+1}_step_{tensorboard_step}.png"))
             tensorboard_step += 1
         
         # 计算epoch平均损失（使用ExpoAverageMeter的指数加权平均）
@@ -187,7 +187,7 @@ def training_pipeline(config_path: str, checkpoint_path: str = None) -> None:
         if val_epoch_loss < best_val_loss:
             best_val_loss = val_epoch_loss
             epochs_since_improvement = 0
-            best_model_filename = f"{checkpoint_dir}\\best_model.pth"
+            best_model_filename = os.path.join(checkpoint_dir, "best_model.pth")
             torch.save(model.state_dict(), best_model_filename)
             print(f"Best model saved: {best_model_filename} (Val Loss: {best_val_loss:.4f})")
         else:
@@ -203,13 +203,13 @@ def training_pipeline(config_path: str, checkpoint_path: str = None) -> None:
             'config': config,
             'timestamp': run_timestamp
         }
-        checkpoint_filename = f"{checkpoint_dir}\\latest_checkpoint.pth"
+        checkpoint_filename = os.path.join(checkpoint_dir, "latest_checkpoint.pth")
         torch.save(checkpoint, checkpoint_filename)
         print(f"Checkpoint saved: {checkpoint_filename}")
         
         # 保存模型(仅作备份)
         if (epoch + 1) % train_config.save_frequency == 0:
-            best_model_filename = f"{checkpoint_dir}\\epoch_{epoch+1}.pth"
+            best_model_filename = os.path.join(checkpoint_dir, f"epoch_{epoch+1}.pth")
             torch.save(model.state_dict(), best_model_filename)
             print(f"Backup model saved: {best_model_filename}")
         print("\n")

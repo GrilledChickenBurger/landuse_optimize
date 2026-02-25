@@ -4,8 +4,9 @@ import os
 import yaml
 from typing import Any, Dict, List, Optional, Tuple, Union
 import argparse
-import rasterio
 import numpy as np
+import rasterio
+from rasterio.transform import from_origin
 import cv2
 import torch
 import matplotlib.pyplot as plt
@@ -30,7 +31,6 @@ def get_namespace(config_dict: Dict) -> argparse.Namespace:
             value_new = value
         setattr(config, key, value_new)
     return config
-
 
 
 def convert_to_nparray(array: Any) -> Optional[np.ndarray]:  
@@ -281,7 +281,7 @@ def get_video_from_imgs(src_folder,video_folder):
     print("================= 生成视频中... =================")
 
     # src_folder里所有图片的路径
-    allvalimg_path = [f"{src_folder}\\{filename}" for filename in os.listdir(src_folder)]
+    allvalimg_path = [os.path.join(src_folder, filename) for filename in os.listdir(src_folder)]
 
     # "SA\results\run_240611_231924\history"
     frame_num=len(allvalimg_path)

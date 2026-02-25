@@ -172,9 +172,9 @@ class OptimizeDataset(BaseDataset):
     use_parallel: bool
         是否并行加载数据
     max_workers: int
-        并行加载数据的线程数
+        并行加载数据的最大线程数
     """
-    def __init__(self, root: str, shape: List, year: str, factor_list: List, ES_list: List, use_parallel: bool = False, max_workers: int = 2):
+    def __init__(self, root: str, shape: List, year: str, factor_list: List, ES_list: List, use_parallel: bool=False, max_workers: int=1):
         # 调用父类初始化，但不在这里加载数据
         super().__init__(root, shape, factor_list)
         

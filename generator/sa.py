@@ -43,9 +43,7 @@ def generate_new_plan(cur_plan:torch.Tensor, ori_plan:torch.Tensor,
     # 随机选择一种变化方式
     change_type = np.random.choice(['small', 'mid', 'large', 'return'], 
                                 p=[small_prob, mid_prob, large_prob, return_prob])
-    print(f"Increase_step={increase_step}. Choose a {change_type}-wise move.")
-
-    # mask = self.real_change_area
+    # print(f"Increase_step={increase_step}. Choose a {change_type}-wise move.")
 
     # 根据选定的变化方式生成新的方案
     if change_type == 'return':
@@ -106,13 +104,18 @@ def area_wise_change(cur_plan: torch.Tensor, scale: str, scale_minmax_dict: Dict
         count+=1
 
         if count==10000:
-            assert scale_idx > 0
-            scale = ['small', 'mid', 'large'][scale_idx-1]
-            print(f"Unable to generate, change to the previous level: {scale}-wise move.")
-            min_area = scale_minmax_dict[scale]['min']
-            max_area = scale_minmax_dict[scale]['max']
-            scale_idx -= 1
-            count = 0
+            if scale_idx > 0:
+                scale = ['small', 'mid', 'large'][scale_idx-1]
+                print(f"Unable to generate, change to the previous level: {scale}-wise move.")
+                min_area = scale_minmax_dict[scale]['min']
+                max_area = scale_minmax_dict[scale]['max']
+                scale_idx -= 1
+                count = 0
+            else:
+                # 如果已经是smallest尺度，无法降级，直接返回原方案
+                print("Warning: Unable to find valid area after 10000 attempts at smallest scale. Returning original plan.")
+                d_change_area = torch.zeros_like(cur_plan)
+                return cur_plan, d_change_area
 
 
     # 从lu_labels列表中随机选择新的像素值，但排除0值

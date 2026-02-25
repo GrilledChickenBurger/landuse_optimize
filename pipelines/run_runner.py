@@ -95,7 +95,6 @@ def pipeline(config_path: str,
         actual_optimize_num = 0
         scenario_save_folder = os.path.join(type_config.save_path, run_timestamp, current_scenario)
         ensure_folder(scenario_save_folder)
-        print(f"  结果保存目录: {scenario_save_folder}")
 
         # 已处理过样本索引
         processed_samples = set() if not is_processed else set(os.listdir(scenario_save_folder))
@@ -200,10 +199,3 @@ def get_data_dict(data: torch.Tensor, factor_list: List[str], prev_data_dict: Di
         d = data[:, i]  # shape=(1, H, W)
         data_dict[factor] = d.unsqueeze(1)  # 添加因子维度，shape=(1, 1, H, W)
     return data_dict
-
-
-
-if __name__ == "__main__":
-    # 示例调用
-    config_path = "configs\\optimizerConfig.yaml"
-    pipeline(config_path)

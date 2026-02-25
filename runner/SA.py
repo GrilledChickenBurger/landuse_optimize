@@ -91,7 +91,8 @@ class SA:
         # 生成新方案相关限制信息
         redline_restrict = data_dict['restrict']
         pred_grid_restrict = rUtils.get_grid_restrict_area(self.pred_diff)
-        self.hard_restrict = torch.logical_and(redline_restrict, pred_grid_restrict)
+        lu_zero_restrict = (self.ori_plan != 0)  # LU=0的地方不可改变
+        self.hard_restrict = torch.logical_and(torch.logical_and(redline_restrict, pred_grid_restrict), lu_zero_restrict)
         self.cls_restrict = rUtils.get_cls_restrict_area(self.ori_plan)
         self.pred_diff_pixelnum = torch.count_nonzero(torch.logical_and(self.hard_restrict, self.pred_diff)).item()
         self.scale_minmax_dict = rUtils.get_scale_minmax_dict(self.pred_diff_pixelnum)
@@ -115,13 +116,15 @@ class SA:
         self.best_plan = self.ori_plan
         self.best_score = float('inf') # 初始化为无穷大，因为是最小化问题
         
-        # text, charts
+        # text, charts, logs
         self.total_score_list = []
         self.change_score_list = []
         self.landscape_score_list = []
         self.es_score_list = []
         self.es_dict:Dict[str,List[float]] = {'food':[],'carbon':[],'water':[],'culture':[]}
         self.text = ''
+        self.print_frequency = config.print_frequency
+        self.visualize_frequency = config.visualize_frequency
         print(f"Done. LU_idx: {self.index}, weight: {self.es_weight_dict}.\n")
 
         # save result
@@ -203,7 +206,7 @@ class SA:
             print("预测不发生改变，不进入模拟退火过程。")
             return self.ori_plan
         
-        print("================= SA Running... =================")
+        print(f"================= 【{self.index}】SA Running... =================")
         
         # 初始化温度
         cur_temp = self.t_0
@@ -214,11 +217,11 @@ class SA:
         # 迭代次数计数器
         iteration = 0
         increase_iteration = 0
-        result_folder = f"{self.save_path}\\{self.index}"
+        result_folder = os.path.join(self.save_path, self.index)
+        tUtils.ensure_folder(result_folder)
         
         # 模拟退火主循环
         while cur_temp > self.t_end:
-            print(f"\nStep {iteration}")
             # 生成新解
             new_plan, d_diff = generate_new_plan(cur_plan, 
                                         self.ori_plan,
@@ -251,7 +254,11 @@ class SA:
             cur_score = cur_score_list[0]
             # 更新记录目标函数项的列表
             self.update_score_lists(cur_score_list)
-            print(f"        温度: {cur_temp:.4f}, 当前分数={cur_score:.4f}, 最佳分数={self.best_score:.4f}")
+
+            if iteration % self.print_frequency == 0:
+                print(f"\nStep {iteration}")
+                print(f"Increase_iteration: {increase_iteration}")
+                print(f"        温度: {cur_temp:.4f}, 当前分数={cur_score:.4f}, 最佳分数={self.best_score:.4f}")
             
             # 更新全局最优解（最小化问题）
             if cur_score < self.best_score:
@@ -264,7 +271,7 @@ class SA:
             iteration += 1
             
             # 打印进度
-            if iteration % 200 == 0:
+            if iteration % self.visualize_frequency == 0:
                 print(f"        温度: {cur_temp:.4f}, 当前分数: {cur_score:.4f}, 最佳分数: {self.best_score:.4f}")
                 print(f"        change_score={cur_score_list[1]:.4f}, ES_score={cur_score_list[2]:.4f}, landscape_score={cur_score_list[4]:.4f}.")
                 tensor_dict = {
@@ -274,7 +281,7 @@ class SA:
                     'cur_diff': cur_diff,
                 }
                 tUtils.visualize_tensor_list(tensor_dict, self.text,
-                                            save_path=f'{result_folder}\\history\\iter_{iteration}.png',
+                                            save_path=os.path.join(result_folder, 'history', f'iter_{iteration}.png'),
                                             figsize=(20, 6),
                                             color_map=COLOR_MAP)
         
@@ -286,21 +293,23 @@ class SA:
         self.best_plan = torch.where(best_diff==1, self.best_plan, self.ori_plan)
 
         rUtils.save_all_plans(self.ori_plan, self.best_plan, self.final_plan, self.index, 
-                        f'{result_folder}\\plans_{idx}',
-                        'D:\\_programming\\_LAB_ASSIGMENTS\\AAAAA栅格分割')
+                        os.path.join(result_folder, f'plans_{idx}'),
+                        raw_data_root=None)
         # 写入性能指标
         scores = write_performance_score(self.best_plan, self.ori_plan, self.final_plan, self.pred_diff,
                                 self.info_dict,
-                                src_folder=f'{result_folder}\\plans_{idx}',
+                                src_folder=os.path.join(result_folder, f'plans_{idx}'),
+                                output_folder=os.path.join(result_folder, f'performance_{idx}'),
+                                landscape=False,
                                 frg_model_path=self.frg_model_path,
-                                output_folder=f'{result_folder}\\performance_{idx}')               
-        output_file = f'{result_folder}\\performance_score.json'
+                                )               
+        output_file = os.path.join(result_folder, 'performance_score.json')
         with open(output_file,'w') as file:
             json.dump(scores, file, indent=4)  
         # 绘制目标函数项的变化趋势图
         score_list_data = [self.total_score_list, self.change_score_list, self.es_score_list, self.landscape_score_list, self.es_dict ]
         rUtils.draw_score_list(score_list_data, ['total_score', 'change_score', 'ES_score', 'landscape_score'],
-                                save_folder=f'{result_folder}\\charts')
+                                save_folder=os.path.join(result_folder, 'charts'))
         # 可视化最终方案
         tensor_dict = {
                     'ori_plan': self.ori_plan,
@@ -311,7 +320,7 @@ class SA:
                     'real_diff': (self.ori_plan != self.final_plan),
                 }
         tUtils.visualize_tensor_list(tensor_dict, self.text,
-                                    save_path=f'{result_folder}\\best_score.png',
+                                    save_path=os.path.join(result_folder, 'best_score.png'),
                                     color_map=COLOR_MAP)
 
         return self.best_plan

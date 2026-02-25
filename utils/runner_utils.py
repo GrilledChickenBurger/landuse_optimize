@@ -227,7 +227,7 @@ def draw_score_list(score_list_data: List[Union[List[float], Dict[str, List[floa
 
 
 def save_all_plans(ori_plan: torch.Tensor, best_plan: torch.Tensor, final_plan: torch.Tensor, index: str, 
-                save_folder: str, raw_data_root: str) -> None:
+                save_folder: str, raw_data_root: str = None) -> None:
     """
     保存最佳解、初始解和目标解的土地利用方案为TIFF文件。\n
     Parameters:
@@ -236,8 +236,8 @@ def save_all_plans(ori_plan: torch.Tensor, best_plan: torch.Tensor, final_plan: 
         best_plan: tensor, [1,1,128,128], 最佳解土地利用方案
         final_plan: tensor, [1,1,128,128], 目标解土地利用方案
         index: str, 数据索引, 格式为 'year_idx_delta'
-        result_path: str, 结果保存路径
-        raw_data_root: str, 原始数据根目录, 用于复制TFW文件
+        save_folder: str, 结果保存路径
+        raw_data_root: str, 原始数据根目录, 用于复制TFW文件; 若为None, 则不复制TFW文件
     """
     save_tif(best_plan, output_folder=save_folder,output_filename='best_plan.TIF')
     save_tif(ori_plan, output_folder=save_folder,output_filename='ori_plan.TIF')
@@ -246,10 +246,11 @@ def save_all_plans(ori_plan: torch.Tensor, best_plan: torch.Tensor, final_plan: 
     # 需要TFW文件的名称和TIF的名称完全对应，需要复制3份并重命名。
     year = index.split("_")[0]
     idx = index.split("_")[1]
-    other_tiff_folder = f"{raw_data_root}\\LU{year}"
-    other_tiff_path = [os.path.join(other_tiff_folder, f) for f in os.listdir(other_tiff_folder) if f.startswith(f"LU{year}_{idx}.") and f.endswith(".tfw")]
-    assert len(other_tiff_path)==1
-    for path in other_tiff_path:
-        shutil.copy(path, f'{save_folder}\\best_plan.tfw')
-        shutil.copy(path, f'{save_folder}\\ori_plan.tfw')
-        shutil.copy(path, f'{save_folder}\\tgt_plan.tfw')
+    if raw_data_root is not None:
+        other_tiff_folder = os.path.join(raw_data_root, f'LU{year}')
+        other_tiff_path = [os.path.join(other_tiff_folder, f) for f in os.listdir(other_tiff_folder) if f.startswith(f"LU{year}_{idx}.") and f.endswith(".tfw")]
+        assert len(other_tiff_path)==1
+        for path in other_tiff_path:
+            shutil.copy(path, os.path.join(save_folder, 'best_plan.tfw'))
+            shutil.copy(path, os.path.join(save_folder, 'ori_plan.tfw'))
+            shutil.copy(path, os.path.join(save_folder, 'tgt_plan.tfw'))

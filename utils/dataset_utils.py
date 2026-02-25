@@ -5,12 +5,12 @@ import copy
 from numbers import Number
 from typing import List, Dict
 import numpy as np
-# import rasterio
-# from osgeo import gdal
 from scipy.ndimage import label, generate_binary_structure
 import torch
-os.environ['PROJ_LIB'] = 'D:/anaconda3/envs/pytorch/Library/share/proj'
-os.environ['GDAL_DATA'] = 'D:/anaconda3/envs/pytorch/Library/share'
+# os.environ['PROJ_LIB'] = 'D:/anaconda3/envs/pytorch/Library/share/proj'
+os.environ['PROJ_LIB'] = 'root/miniconda3/envs/pytorch/share/proj'
+# os.environ['GDAL_DATA'] = 'D:/anaconda3/envs/pytorch/Library/share'
+os.environ['GDAL_DATA'] = 'miniconda3/envs/pytorch/share'
 
 from libs.const import *
 from utils.tools import convert_to_nparray
@@ -128,7 +128,7 @@ def get_year_data(
     shape: List[int], 数据形状，[1, H, W]
     max_workers: int, 并行工作线程数
     use_parallel: bool, 是否使用并行处理
-    
+
     Returns:
     ----------
     nparr: np.ndarray, 包含所有数据的 numpy.float32 数组，shape为(num, len(key_list), H, W)
@@ -145,7 +145,7 @@ def get_year_data(
         except Exception as e:
             print(f"文件读取失败 {filename}: {e}")
             return None
-    
+  
     # 获取文件数量
     num = len(os.listdir(os.path.join(root, key_list[0])))
     nparr=np.empty((num, len(key_list), shape[1], shape[2]), dtype=np.float32)

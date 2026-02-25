@@ -1,4 +1,4 @@
-# 变化预测模型训练配置文件
+
 device:
   use_gpu: true
 

@@ -50,7 +50,7 @@ def train_maxent(root: str, year: str, save_path: str) -> None:
         save_path: str, path to save the maxent dataset
     """
     print("================= Prior: MaxEnt Training... =================")
-    data_path = f"{root}\\valid_{year}\\_maxent"
+    data_path = os.path.join(root, f'valid_{year}', '_maxent')
     train_pipeline(data_path, save_path)
     print("================= Prior: MaxEnt Training Done. =================")
 
@@ -71,7 +71,6 @@ def load_maxent_model(model_path: str) -> ela.MaxentModel:
     maxent_model = ela.load_object(model_path)
     if maxent_model is None:
         raise ValueError(f"MaxEnt模型加载失败，文件可能已损坏: {model_path}")
-    print(maxent_model.get_params())
     return maxent_model
 
 

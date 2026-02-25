@@ -153,7 +153,7 @@ def split_SA_dataset(folder: str, factor_list: Optional[List[str]] = None,split_
             src_factor_path = [
                 os.path.join(src_factor, f)
                 for f in os.listdir(src_factor)
-                if f.lower().endswith((".tif", ".tiff"))
+                if f.endswith(".TIF")
             ]
             for path in src_factor_path:
                 idx = path.split(os.path.sep)[-1].split("_")[-1].split(".")[0]

@@ -7,6 +7,7 @@ import tqdm
 import torch
 from torch.utils.data import DataLoader
 
+from libs.const import ALL_YEARS
 from datasets.base_dataloader import get_dataset
 from utils.param_utils import RunningStats
 from utils.tools import get_yaml
