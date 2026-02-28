@@ -196,12 +196,19 @@ def calculate_es_score(ori_plan: torch.Tensor,
 
     es_score_dict = {}
     for type in best_es_dict.keys():
+        ori_value = float(ori_es_dict[type])
+        tgt_value = float(tgt_es_dict[type])
+        
+        # 处理除零情况
+        best_ori_diff = (float(best_es_dict[type]) - ori_value) / ori_value if ori_value != 0 else 0.0
+        best_tgt_diff = (float(best_es_dict[type]) - tgt_value) / tgt_value if tgt_value != 0 else 0.0
+        
         es_score_dict[type] = {
             "best_plan": float(best_es_dict[type]),
-            "tgt_plan": float(tgt_es_dict[type]),
-            "ori_plan": float(ori_es_dict[type]),
-            "best_ori_diff": (float(best_es_dict[type]) - float(ori_es_dict[type]))/float(ori_es_dict[type]),
-            "best_tgt_diff": (float(best_es_dict[type]) - float(tgt_es_dict[type]))/float(tgt_es_dict[type]),
+            "tgt_plan": tgt_value,
+            "ori_plan": ori_value,
+            "best_ori_diff": best_ori_diff,
+            "best_tgt_diff": best_tgt_diff,
         }
     return es_score_dict
 
@@ -229,7 +236,7 @@ def create_frg_csv(src_folder, save_path):
 
 def frg_cmd(model_path, batchcsv_path, output_folder):
     """用命令行直接调用 fragstats软件, 分析batchcsv_path里的所有文件"""
-    output_path = f"{output_folder}\\scores"
+    output_path = os.path.join(output_folder, "scores")
     frg_flag = 0
     while frg_flag != 1:
         frg_path=os.getenv('frg_cmd')
@@ -315,11 +322,15 @@ def get_land_landscape_index(result_folder, index_list):
     return land_results
 
 
-def write_performance_score(best_plan,ori_plan,tgt_plan, 
-                            pred_diff, 
-                            info_dict,
-                            src_folder, frg_model_path,
-                            output_folder):
+def write_performance_score(best_plan: torch.Tensor,
+                            ori_plan: torch.Tensor,
+                            tgt_plan: torch.Tensor, 
+                            pred_diff: torch.Tensor, 
+                            info_dict: dict,
+                            src_folder: str, 
+                            output_folder: str,
+                            landscape: bool = True,
+                            frg_model_path: str = None,):
     """
     评估方案, 评估项: 变化区域IOU、ES、Landscape\n
     Parameters:
@@ -357,12 +368,14 @@ def write_performance_score(best_plan,ori_plan,tgt_plan,
     performance_score['ES'] = es_value_dict
     
     # 3. landscape
-    cls_list = ['LPI','LSI','AI','ED']
-    land_list = ['LPI','LSI','AI','ED','SHEI','SHDI','CONTAG']
-    create_frg_csv(src_folder, f'{output_folder}\\batch.csv')
-    frg_cmd(frg_model_path, f'{output_folder}\\batch.csv', output_folder)
-    # cls_dict = get_cls_landscape_index(output_folder, cls_list)
-    land_dict = get_land_landscape_index(output_folder, land_list)
+    land_dict = {}
+    if landscape:
+        cls_list = ['LPI','LSI','AI','ED']
+        land_list = ['LPI','LSI','AI','ED','SHEI','SHDI','CONTAG']
+        create_frg_csv(src_folder, f'{output_folder}\\batch.csv')
+        frg_cmd(frg_model_path, f'{output_folder}\\batch.csv', output_folder)
+        # cls_dict = get_cls_landscape_index(output_folder, cls_list)
+        land_dict = get_land_landscape_index(output_folder, land_list)
     # performance_score['Landscape']['class'] = cls_dict
     performance_score['Landscape']['land'] = land_dict
     
@@ -370,15 +383,10 @@ def write_performance_score(best_plan,ori_plan,tgt_plan,
     performance_score['FINAL']['FOM'] = calculate_FOM(ori_plan, best_plan, tgt_plan)
     performance_score['FINAL']['kappa'] = calculate_kappa(best_plan, tgt_plan)
 
-    output_file = f'{output_folder}\\performance_score.json'
+    output_file = os.path.join(output_folder, "performance_score.json")
     with open(output_file,'w') as file:
         json.dump(performance_score, file, indent=4)  
 
 
     print(f"Done. The performance scores has been saved to {output_folder}.\n")
     return performance_score
-
-
-
-if __name__=="__main__":
-    pass

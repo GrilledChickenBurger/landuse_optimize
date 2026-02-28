@@ -5,6 +5,7 @@ import yaml
 from typing import Any, Dict, List, Optional, Tuple, Union
 import argparse
 import rasterio
+from rasterio.transform import from_origin
 import numpy as np
 import cv2
 import torch
@@ -31,7 +32,29 @@ def get_namespace(config_dict: Dict) -> argparse.Namespace:
         setattr(config, key, value_new)
     return config
 
+def repeat(func: callable, repeat_num: int, replace_element: Any, **kwargs) -> Any:
+    """
+    重复调用函数repeat_num次，并将每次的结果作为下一次调用的参数。\n
+    Parameters:
+    ----------
+        func: callable, 要重复调用的函数
+        repeat_num: int, 重复调用次数
+        replace_element: Any, 初始参数
+        **kwargs: 其他固定参数
 
+    Returns:
+    ----------
+        Any: 经过repeat_num次调用后的最终结果
+    """
+    e = replace_element
+    for _ in range(repeat_num):
+        res = func(e, **kwargs)
+        # 如果函数返回多个值，只取第一个值作为下一次调用的参数
+        if isinstance(res, tuple):
+            e = res[0]  # 取第一个返回值
+        else:
+            e = res
+    return e
 
 def convert_to_nparray(array: Any) -> Optional[np.ndarray]:  
     """
@@ -281,7 +304,7 @@ def get_video_from_imgs(src_folder,video_folder):
     print("================= 生成视频中... =================")
 
     # src_folder里所有图片的路径
-    allvalimg_path = [f"{src_folder}\\{filename}" for filename in os.listdir(src_folder)]
+    allvalimg_path = [os.path.join(src_folder, filename) for filename in os.listdir(src_folder)]
 
     # "SA\results\run_240611_231924\history"
     frame_num=len(allvalimg_path)

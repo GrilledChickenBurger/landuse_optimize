@@ -55,7 +55,7 @@ def cal_tgt_function(cur_plan: torch.Tensor,
         lambda_LS = 1 + (5 - 1) * (torch.count_nonzero(pred_diff) - 300) / (6000 - 300)
 
     eval_end_time = time.time()
-    print(f"eval time: {eval_end_time - eval_start_time:.4f}")
+    # print(f"eval time: {eval_end_time - eval_start_time:.4f}")
     
     tgt_func = change_relative_score - lambda_ES * es_relative_score + lambda_LS * landscape_score
     return tgt_func, change_relative_score, es_relative_score, es_relative_score_dict, landscape_score

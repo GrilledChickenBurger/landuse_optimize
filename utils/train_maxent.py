@@ -314,7 +314,7 @@ def predict_and_save_raster(model_path, rasters, result_folder, result_name='max
     # write the model predictions to disk
     result_name = result_name if result_name is not None else 'maxent-predictions.tif'
     assert result_name.endswith('.tif'), "Result file name must end with '.tif'"
-    result_path = result_folder + '\\' + result_name
+    result_path = os.path.join(result_folder, result_name)
 
     ela.apply_model_to_rasters(model, rasters, result_path, transform="logistic")
     print(f"Model predictions saved to {result_path}")
@@ -377,22 +377,21 @@ def train_pipeline(root, save_path):
     train_with_alldata(csv_path, rasters, labels=labels, save_path=save_path, show_plot=False)
 
 
-if __name__ == '__main__':
-    data_path="D:\\_programming\\_LAB_ASSIGMENTS\\_data\\valid_20\\_maxent"
+# if __name__ == '__main__':
+#     data_path="D:\\_programming\\_LAB_ASSIGMENTS\\_data\\valid_20\\_maxent"
 
-    csv_name = [f for f in os.listdir(data_path) if f.endswith('.csv')]
-    csv = os.path.join(data_path, csv_name[0])
+#     csv_name = [f for f in os.listdir(data_path) if f.endswith('.csv')]
+#     csv = os.path.join(data_path, csv_name[0])
 
-    raster_names=[f for f in os.listdir(data_path) if f.endswith('.tif')]
-    rasters = [os.path.join(data_path, raster) for raster in raster_names]
-    labels = [name.split('.')[0] for name in raster_names]
+#     raster_names=[f for f in os.listdir(data_path) if f.endswith('.tif')]
+#     rasters = [os.path.join(data_path, raster) for raster in raster_names]
+#     labels = [name.split('.')[0] for name in raster_names]
 
-    model_name = 'demo-maxent-model_sklearn.ela'
-    model_path = os.path.join(data_path, model_name)
+#     model_name = 'demo-maxent-model_sklearn.ela'
+#     model_path = os.path.join(data_path, model_name)
 
-    train_with_alldata(csv, rasters,labels=labels, save_path=model_path, show_plot=False)
+#     train_with_alldata(csv, rasters,labels=labels, save_path=model_path, show_plot=False)
 
-    result_name = 'demo-maxent-predictions.tif'
-    result_folder = data_path + '\\' + 'output'
-    predict_and_save_raster(model_path, rasters, result_folder=result_folder, result_name=result_name)
-    pass
+#     result_name = 'demo-maxent-predictions.tif'
+#     result_folder = data_path + '\\' + 'output'
+#     predict_and_save_raster(model_path, rasters, result_folder=result_folder, result_name=result_name)

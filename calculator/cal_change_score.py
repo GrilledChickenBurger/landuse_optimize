@@ -61,12 +61,11 @@ def cal_change_value(cur_diff: torch.Tensor, pred_diff: torch.Tensor, pred_diff_
         # cur_area 和 pred_diff 完全不重叠
         if distance > 0 and intersection_area == 0:
             total_distance += (area ** 2) * distance 
-        elif distance > 0 and intersection_area > 0:
+        elif distance > 0 and intersection_area > 0 and area - intersection_area > 0:
             diff_area = area - intersection_area
-            assert diff_area > 0
             total_distance += ((diff_area ** 2) * distance - (intersection_area ** 2) * 10)
         # cur_area 完全在 pred_diff 内
-        elif distance == 0:
+        elif distance == 0 or area - intersection_area == 0:
             total_distance -= (area ** 2) * 10 
 
     return torch.tensor(total_distance)
