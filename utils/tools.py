@@ -69,10 +69,10 @@ def convert_to_nparray(array: Any) -> Optional[np.ndarray]:
     """  
     if isinstance(array, np.ndarray):  
         return array  
-    elif hasattr(array, 'numpy') and callable(getattr(array, 'numpy')):   
-        return array.numpy()  
     elif isinstance(array, torch.Tensor):  
         return array.detach().cpu().numpy() 
+    elif hasattr(array, 'numpy') and callable(getattr(array, 'numpy')):   
+        return array.numpy()  
     else:  
         print("错误：输入不是张量或numpy数组")  
         return None  
