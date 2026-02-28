@@ -184,11 +184,14 @@ def load_training_data(root: str, split: str, shape: List[int], condition_list: 
                 break
             else:
                 p_tuple = tuple(p)
-                packlist.append(ALL_PACK_ORI_DICT[p_tuple])
-                is_change = ALL_PACK_ORI_DICT[p_tuple][-1]
-                # 在训练数据中，只对变化的样本应用变换增强
-                if split != 'val' and is_change and (not only_changed) and transform is not None:
-                    packlist.extend(apply_transform(ALL_PACK_ORI_DICT[p_tuple], transform, ALL_PACK_TRANSFORM_REPEAT_DICT[p_tuple]))
+                pack = ALL_PACK_ORI_DICT[p_tuple]
+                # 检查pack是否为空（当only_changed=True且样本未变化时）
+                if pack:  # 只有当pack不为空时才处理
+                    packlist.append(pack)
+                    is_change = pack[-1]
+                    # 在训练数据中，只对变化的样本应用变换增强
+                    if split != 'val' and is_change and (not only_changed) and transform is not None:
+                        packlist.extend(apply_transform(pack, transform, ALL_PACK_TRANSFORM_REPEAT_DICT[p_tuple]))
 
         xf_pack_list.extend([p for p in packlist if p])
 
