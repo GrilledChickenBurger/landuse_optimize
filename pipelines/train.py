@@ -158,7 +158,7 @@ def training_pipeline(config_path: str, checkpoint_path: str = None) -> None:
                 print(f'Epoch [{epoch+1}/{epochs}], Batch [{i_batch}/{len(train_dataloader)}], Loss: {train_loss.val:.4f}({train_loss.avg:.4f}), Batch Time: {batch_time.val:.3f}({batch_time.avg:.3f})')
             if tensorboard_step % train_config.visualize_frequency == 0:
                 visualize_outputs(outputs, diff, 
-                                epoch, tensorboard_step, 
+                                epoch = epoch, step = tensorboard_step, 
                                 save_path=os.path.join(log_dir, f"epoch_{epoch+1}_step_{tensorboard_step}.png"))
             tensorboard_step += 1
         
@@ -222,7 +222,10 @@ def training_pipeline(config_path: str, checkpoint_path: str = None) -> None:
 
 
 
-def valid_pipeline(config_path: str, model_checkpoint_path: str) -> None:
+def valid_pipeline(config_path: str, model_checkpoint_path: str, 
+                        idxs: List[int] = None, 
+                        datasets: List[str] = ['val'],
+                        only_changed: bool = False) -> None:
     """
     验证变化检测模型的主函数。
 
@@ -230,6 +233,8 @@ def valid_pipeline(config_path: str, model_checkpoint_path: str) -> None:
     ----------
         config_path: str 配置文件路径
         model_checkpoint_path: str 模型checkpoint文件路径
+        idxs: List[int] 待验证样本索引列表，可选
+        datasets: List[str] 要验证的数据集列表，可选，默认为['val']，可包含['train', 'val']
     """
     print("\n================= 开始验证模型... =================")
     # 1. 加载配置
@@ -240,19 +245,7 @@ def valid_pipeline(config_path: str, model_checkpoint_path: str) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() and config.device.use_gpu else "cpu")
     print(f"使用设备: {device}")
     
-    # 3. 加载验证集
-    val_config = config.validation
-    val_data_config = argparse.Namespace(**vars(config.data))
-    val_data_config.split = getattr(val_config, "split", "val")
-    val_data_config.pack = getattr(val_config, "pack", config.data.pack)
-    val_dataset = get_dataset(type="training", data_config=val_data_config)
-    val_dataloader = DataLoader(
-        val_dataset,
-        batch_size=getattr(val_config, "batch_size", config.data.batch_size),
-        shuffle=getattr(val_config, "shuffle", False),
-    )
-
-    # 4. 加载模型
+    # 3. 加载模型
     train_config = config.training
     model_type = train_config.model_name
     model = create_model(
@@ -263,45 +256,109 @@ def valid_pipeline(config_path: str, model_checkpoint_path: str) -> None:
     ).to(device)
     print(f"模型 {model_type} 初始化完成")
 
-    # 5. 加载checkpoint
+    # 4. 加载checkpoint
     checkpoint_path = model_checkpoint_path
     print(f"\n================= 开始加载checkpoint: {checkpoint_path}... =================")
     model_state_dict = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(model_state_dict)
     print(f"Checkpoint {checkpoint_path} 加载完成")
 
-    # 6. 验证模型
+    # 5. 验证模型
     model.eval()
-    val_loss = tUtils.ExpoAverageMeter()
-    val_metric = tUtils.MetricsMeter()
-    print(f"\n================= 开始验证 {len(val_dataloader)} 个batch... =================")
-    
-    with torch.no_grad():
-        for i_batch, data_pack in enumerate(val_dataloader):
-            # 处理一个批次的数据，计算损失
-            loss, outputs, diff = process_batch(data_pack, model, device)
-            # 计算指标
-            outputs = F.sigmoid(outputs)
-            val_metric.update(outputs, diff)
 
-            val_loss.update(loss.item())
-    
-    val_epoch_loss = val_loss.avg
-    print(f'\nVal Loss: {val_epoch_loss:.4f}')
-    # 打印指标
-    print(val_metric)
-    # 保存json
-    metrics = val_metric.get_metrics()
-    metrics['model_name'] = train_config.model_name
-    metrics['data'] = val_config.pack
-    metrics['path'] = checkpoint_path
-    json_path = os.path.join(os.path.dirname(checkpoint_path), f"val_metrics_{val_config.pack}.json")
-    with open(json_path, 'w') as f:
-        json.dump(metrics, f, indent=4)
-    print(f"指标已保存: {json_path}")
+    # 验证所有指定的数据集
+    for dataset_split in datasets:
+        print(f"\n================= 验证数据集: {dataset_split} =================")
+        
+        # 加载数据集
+        data_config = argparse.Namespace(**vars(config.data))
+        data_config.split = dataset_split
+        data_config.only_changed = only_changed
+        data_config.pack = getattr(config.validation, "pack", config.data.pack) if dataset_split == 'val' else config.data.pack
+        dataset = get_dataset(type="training", data_config=data_config)
+        
+        dataloader = DataLoader(
+            dataset,
+            batch_size=getattr(config.validation, "batch_size", config.data.batch_size),
+            shuffle=False,
+        )
+        
+        # 为每个数据集创建新的指标记录器
+        dataset_loss = tUtils.ExpoAverageMeter()
+        dataset_metric = tUtils.MetricsMeter()
+        
+        print(f"开始验证 {len(dataloader)} 个batch...")
+        
+        with torch.no_grad():
+            for i_batch, data_pack in enumerate(dataloader):
+                # 处理一个批次的数据，计算损失
+                loss, outputs, diff = process_batch(data_pack, model, device)
+                # 计算指标
+                outputs = F.sigmoid(outputs)
+                dataset_metric.update(outputs, diff)
+
+                dataset_loss.update(loss.item())
+                print(f'Batch [{i_batch}/{len(dataloader)}], Loss: {dataset_loss.val:.4f}({dataset_loss.avg:.4f}) ')
+        
+        dataset_epoch_loss = dataset_loss.avg
+        print(f'\n{dataset_split} Loss: {dataset_epoch_loss:.4f}')
+        # 打印指标
+        print(dataset_metric)
+        # 保存json
+        metrics = dataset_metric.get_metrics()
+        metrics['model_name'] = train_config.model_name
+        metrics['data'] = data_config.pack
+        metrics['path'] = checkpoint_path
+        json_path = os.path.join(os.path.dirname(checkpoint_path), f"{dataset_split}_metrics_{data_config.pack}.json")
+        with open(json_path, 'w') as f:
+            json.dump(metrics, f, indent=4)
+        print(f"{dataset_split} 指标已保存: {json_path}")
 
     print("\n================= 验证完成! =================")
     
+
+
+def get_changed_indices(config_path: str, datasets: List[str] = ['train', 'val']) -> List[int]:
+    """
+    获取指定数据集中所有发生变化的样本索引
+
+    Parameters:
+    ----------
+        config_path: str 配置文件路径
+        datasets: List[str] 要检查的数据集列表，可选，默认为['train', 'val']
+
+    Returns:
+    -------
+        changed_indices: List[int] 发生变化的样本索引列表
+    """    
+    config = get_yaml(config_path)
+    changed_indices = []
+    
+    for dataset_split in datasets:
+        print(f"\n================= 检查数据集 {dataset_split} 的变化索引... =================")
+        
+        # 加载数据集
+        data_config = argparse.Namespace(**vars(config.data))
+        data_config.split = dataset_split
+        data_config.pack = getattr(config.validation, "pack", config.data.pack) if dataset_split == 'val' else config.data.pack
+        
+        # 设置only_changed为False，获取所有样本
+        data_config.only_changed = True
+        
+        dataset = get_dataset(type="training", data_config=data_config)
+        
+        # 遍历数据集，找出发生变化的样本
+        for i in range(len(dataset)):
+            sample = dataset[i]
+            # 样本格式: [factors, srcLU, diff, idx_label, changed_flag]
+            changed_flag = sample[4]  # 第5个元素是变化标志
+            if changed_flag == 1:  # 1表示发生变化
+                idx = sample[3].split('_')[1]
+                changed_indices.append(idx)
+        
+        print(f"数据集 {dataset_split} 中共有 {len(changed_indices)} 个变化样本")
+    
+    return changed_indices
 
 
 def process_batch(data_pack: List[torch.Tensor], model: nn.Module, device: torch.device):
@@ -338,7 +395,7 @@ def process_batch(data_pack: List[torch.Tensor], model: nn.Module, device: torch
     loss = tUtils.cal_loss(outputs, diff)
     return loss, outputs, diff
 
-def visualize_outputs(outputs: torch.Tensor, diff: torch.Tensor, epoch: int, step: int, save_path: str = None):
+def visualize_outputs(outputs: torch.Tensor, diff: torch.Tensor, epoch: int, step: int, save_path: str = None, isvalid: bool = False):
     """
     可视化模型输出和目标差异。
     PS: outputs 是模型的原始输出，这里需要sigmoid激活。(计算loss时自动经过sigmoid，这里需要手动激活)
@@ -364,10 +421,10 @@ def visualize_outputs(outputs: torch.Tensor, diff: torch.Tensor, epoch: int, ste
         tensor_dict[f'output{i+1}'] = outputs[i]
         tensor_dict[f'gt{i+1}'] = diff[i]
     
-    # 可视化前4个样本
+    main_title = f'Epoch {epoch+1}, Step {step}' if not isvalid else f'Val Epoch {epoch+1}'
     return visualize_tensor_list(
         tensor_dict=tensor_dict,
-        main_title=f'Epoch {epoch+1}, Step {step}',
+        main_title=main_title,
         save_path = save_path,
         color_map='gray',
         figsize = (10, batch_size*6),
