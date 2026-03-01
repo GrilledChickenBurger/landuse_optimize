@@ -108,7 +108,7 @@ def get_pred_diff(model: torch.nn.Module,
     cond = torch.cat((factors, ori_plan_onehot),dim=1).to(device)
     pred_diff_raw = model(cond)
     pred_diff=F.sigmoid(pred_diff_raw)
-    # pred_diff=(pred_diff>=0.5).int()
+    pred_diff=torch.where(pred_diff>=0.5, 1, 0)
 
     return pred_diff.detach().cpu()
 
