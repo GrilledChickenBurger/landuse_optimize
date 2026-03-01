@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 def generate_new_plan(cur_plan:torch.Tensor, ori_plan:torch.Tensor,
-                      T_ratio:float, increase_step:int,
+                      T_ratio:float, noimprove_step:int,
                       scale_minmax_dict:Dict, lu_labels:List,
                       cls_restrict:bool, hard_restrict:bool):
     """
@@ -14,7 +14,7 @@ def generate_new_plan(cur_plan:torch.Tensor, ori_plan:torch.Tensor,
         cur_plan: tensor, [1,1,128,128], 当前土地利用方案
         ori_plan: tensor, [1,1,128,128], 原始土地利用情况
         T_ratio: float, 当前温度 / 初始温度 t_0
-        increase_step: int, 目标函数已有多少步未被优化
+        noimprove_step: int, 目标函数已有多少步未被优化
         scale_minmax_dict: Dict, 变化区域的最小最大面积, 格式为
             {'small': {'min': 100, 'max': 200},
              'mid': {'min': 200, 'max': 400},
@@ -32,7 +32,7 @@ def generate_new_plan(cur_plan:torch.Tensor, ori_plan:torch.Tensor,
     """
     # 根据温度设置change_type的概率
     large_prob = 0.4 * T_ratio + 0.2  
-    if increase_step>=30 or T_ratio<=0.1:
+    if noimprove_step>=30 or T_ratio<=0.1:
         return_prob = 0.2
         mid_prob = 0.2
     else:
@@ -43,7 +43,7 @@ def generate_new_plan(cur_plan:torch.Tensor, ori_plan:torch.Tensor,
     # 随机选择一种变化方式
     change_type = np.random.choice(['small', 'mid', 'large', 'return'], 
                                 p=[small_prob, mid_prob, large_prob, return_prob])
-    # print(f"Increase_step={increase_step}. Choose a {change_type}-wise move.")
+    # print(f"noimprove_step={noimprove_step}. Choose a {change_type}-wise move.")
 
     # 根据选定的变化方式生成新的方案
     if change_type == 'return':

@@ -151,7 +151,7 @@ def mutate(individual:torch.Tensor, **kwargs):
         gen_ratio: float, 遗传代数, 范围[0,1]
         **kwargs: Dict, 其他generate_new_plan所需的参数, 格式为
             ori_plan: tensor, [1,1,128,128], 原始土地利用情况
-            increase_step: int, 目标函数已有多少步未被优化
+            noimprove_step: int, 目标函数已有多少步未被优化
             scale_minmax_dict: Dict, 变化区域的最小最大面积, 格式为
                 {'small': {'min': 100, 'max': 200},
                  'mid': {'min': 200, 'max': 400},
