@@ -296,12 +296,13 @@ class SimulatedAnnealing:
 
         rUtils.save_all_plans(self.ori_plan, self.best_plan, self.final_plan, self.index, 
                         os.path.join(result_folder, f'plans_{idx}'),
-                        'D:\\_programming\\_LAB_ASSIGMENTS\\AAAAA栅格分割')
+                        raw_data_root=None)
         # 写入性能指标
         scores = write_performance_score(self.best_plan, self.ori_plan, self.final_plan, self.pred_diff,
                                 self.info_dict,
                                 src_folder=os.path.join(result_folder, f'plans_{idx}'),
                                 output_folder=os.path.join(result_folder, f'performance_{idx}'),
+                                landscape=False,
                                 frg_model_path=self.frg_model_path,
                                 )               
         output_file = os.path.join(result_folder, 'performance_score.json')
