@@ -270,11 +270,14 @@ class GeneticAlgorithm:
         self.ori_pop_size = config.ori_pop_size  # 初始种群大小
         self.final_pop_size = config.final_pop_size  # 最终种群大小
         self.max_gen = config.max_gen  # 最大迭代次数
-        self.max_noimprove_gen = config.max_noimprove_gen  # 最大无改进迭代次数
         self.crossover_rate = config.crossover_rate  # 交叉率
         self.mutation_rate = config.mutation_rate  # 变异率
         self.elite_ratio = vars(config.strategy).get('elite_ratio', 0.1)  # 精英保留比例
         self.strategy = GeneticAlgorithmStrategy(config.strategy).build()  # 策略, 包括select, crossover, mutation的具体实现方式
+        
+        # 流程提前结束条件
+        self.max_noimprove_gen = config.max_noimprove_gen  # 最大无改进迭代次数
+        self.max_beststuck_gen = config.max_beststuck_gen  # 最优解停滞阈值
         
         # 包装mutate函数，预先传入固定参数
         self.mutate_func = self._create_mutate_wrapper()
@@ -292,7 +295,22 @@ class GeneticAlgorithm:
                                                 condition_list= ["DEM", "DL", "GDP", "RK"] ,
                                                 normalize=True)
         self.frg_model_path = common_config.frg_model_path  # fragstats模型路径
-
+        # tUtils.visualize_tensor_list(
+        #     tensor_dict={
+        #         "DEM":self.factors[0,0],
+        #         "DL":self.factors[0,1],
+        #         "GDP":self.factors[0,2],
+        #         "RK":self.factors[0,3],
+        #         "ori_plan": self.ori_plan,
+        #         "final_plan": self.final_plan,
+        #         "pred_diff": self.pred_diff,
+        #         'real_diff': torch.from_numpy(dUtils.remove_lines(self.final_plan != self.ori_plan))
+        #     },
+        #     save_path=f"{self.index}_visual.png",
+        #     main_title=f"{self.index}",
+        #     color_map='viridis',
+        #     show=True,
+        # )
         # LU方案相关信息
         self.lu_labels = rUtils.get_lu_labels(self.ori_plan)
 
@@ -322,6 +340,7 @@ class GeneticAlgorithm:
         # 初始化当前种群 + 当前最佳方案
         self.best_plan = self.ori_plan
         self.best_score = float('-inf') # 初始化为无穷小，因为是最大化问题
+        self.best_score_generation = 0  # 记录最优解出现的代数
         self.pop_size = self.ori_pop_size  # 当前种群大小
         self.population = initial_new_population(
                                 self.ori_pop_size, 
@@ -638,8 +657,9 @@ class GeneticAlgorithm:
             noimprove_step = 0 if cur_score > prev_score else noimprove_step + 1
             
             # 是否提前终止？
-            if noimprove_step >= self.max_noimprove_gen:
-                print(f"GA提前终止，未改进连续{self.max_noimprove_gen}代。")
+            if noimprove_step >= self.max_noimprove_gen or \
+                    gen - self.best_score_generation >= self.max_beststuck_gen:
+                print(f"GA提前终止，未改进连续{self.max_noimprove_gen}代 或 最优解停滞{self.max_beststuck_gen}代。")
                 break
 
             # --- 自适应种群大小 ---
@@ -678,11 +698,12 @@ class GeneticAlgorithm:
             if cur_score > self.best_score:
                 self.best_plan = cur_plan.clone()
                 self.best_score = cur_score
+                self.best_score_generation = gen  # 记录最优解出现的代数
                 print(f"============ step {gen}: New best score = {self.best_score:.4f} ==============")
             
             # 打印进度
             if gen % self.print_frequency == 0:
-                print(f"\nStep {gen} noimprove_step={noimprove_step}")
+                print(f"\nStep {gen} noimprove_step={noimprove_step} beststuck_gen={gen - self.best_score_generation}")
                 print(f"        种群avg: {pop_stat_dict['avg_fitness']:.4f}, 最差: {pop_stat_dict['worst_fitness']:.4f}")
                 print(f"        当前best: {cur_score:.4f}, 最佳best: {self.best_score:.4f}")
                 print(f"        change_score={cur_score_list[1]:.4f}, ES_score={cur_score_list[2]:.4f}, landscape_score={cur_score_list[4]:.4f}.")
