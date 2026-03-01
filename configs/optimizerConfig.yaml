@@ -52,6 +52,9 @@ SA: # 模拟退火参数
   T_start: 100 # 初始温度
   T_end: 0.1 # 终止温度
   cooling_rate: 0.9995 # 降温率
+  max_noimprove_iter: 1000 # 最大无改进迭代次数
+  max_beststuck_iter: 3000 # 最优解停滞阈值
+
   print_frequency: 100 # 每n步打印一次输出
   visualize_frequency: 500 # 每n步可视化一次输出
   # ES_list: ["RAIN", "NJW", "ZSL", "PODU", "WATER", "CITY", "GD"]
@@ -65,7 +68,7 @@ GA:
   final_pop_size: 8 # 最终种群大小
   max_gen: 3000 # 最大迭代次数
   max_noimprove_gen: 100 # 最大无改进迭代次数
-  max_beststuck_gen: 1000 # 最优解停滞阈值
+  max_beststuck_gen: 400 # 最优解停滞阈值
   crossover_rate: 0.8 # 交叉率
   mutation_rate: 1.0 # 变异率
   scale_ratio: [0.2, 0.5, 0.3] # 初始化种群时的尺度比例:[small,mid,large]

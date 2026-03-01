@@ -391,7 +391,7 @@ class GeneticAlgorithm:
         """
         def wrapped_mutate(individual: torch.Tensor, 
                             gen_ratio: float, 
-                            increase_step: int = 0):
+                            noimprove_step: int = 0):
             """
             包装后的变异函数
             
@@ -399,7 +399,7 @@ class GeneticAlgorithm:
             ----------
                 individual: torch.Tensor, 要变异的个体
                 gen_ratio: float, 遗传代数比例
-                increase_step: int, 目标函数未优化的步数，默认为0
+                noimprove_step: int, 目标函数未优化的步数，默认为0
             
             Returns:
             --------
@@ -410,7 +410,7 @@ class GeneticAlgorithm:
                     individual=individual,
                     T_ratio=max(0.0001, 1-gen_ratio),
                     ori_plan=self.ori_plan,
-                    increase_step=increase_step,
+                    noimprove_step=noimprove_step,
                     scale_minmax_dict=self.scale_minmax_dict,
                     lu_labels=self.lu_labels,
                     cls_restrict=self.cls_restrict,
@@ -601,13 +601,13 @@ class GeneticAlgorithm:
                 # 交叉
                 c1, c2 = self.crossover_func(p1, p2, gen_ratio=gen_ratio,
                                              hard_restrict=self.hard_restrict)
-                c1 = self.mutate_func(c1, gen_ratio=gen_ratio, increase_step=noimprove_step)
-                c2 = self.mutate_func(c2, gen_ratio=gen_ratio, increase_step=noimprove_step)
+                c1 = self.mutate_func(c1, gen_ratio=gen_ratio, noimprove_step=noimprove_step)
+                c2 = self.mutate_func(c2, gen_ratio=gen_ratio, noimprove_step=noimprove_step)
                 offspring.extend([c1, c2])
             else:
                 # 未交叉处理: mutate / no mutate
                 c1, c2 = self.strategy['handle_non_crossover'](p1, p2, gen_ratio=gen_ratio,
-                                                                increase_step=noimprove_step,
+                                                                noimprove_step=noimprove_step,
                                                                 mutate_func=self.mutate_func,
                                                                 )
                 offspring.extend([c1, c2])
@@ -689,7 +689,7 @@ class GeneticAlgorithm:
                 elites = [population[i].clone() for i in elite_indices]
                 # --- 精英变异控制: true / false ---
                 offspring[:elite_num] = self.strategy['apply_elite_mutation'](elites, gen_ratio=gen/self.max_gen,
-                                                                    increase_step=noimprove_step,
+                                                                    noimprove_step=noimprove_step,
                                                                     mutate_func=self.mutate_func,
                                                                     )                     
             population = offspring

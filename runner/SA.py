@@ -74,7 +74,11 @@ class SimulatedAnnealing:
         self.t_0 = config.T_start
         self.t_end = config.T_end
         self.cooling_rate = config.cooling_rate
-
+        
+        # 流程提前结束条件
+        self.max_noimprove_iter = config.max_noimprove_iter  # 最大无改进迭代次数
+        self.max_beststuck_iter = config.max_beststuck_iter  # 最优解停滞阈值
+ 
         # 先验信息
         self.year = index.split('_')[0]
         model_type = model_config.type
@@ -118,7 +122,8 @@ class SimulatedAnnealing:
         # 初始化当前最佳方案
         self.best_plan = self.ori_plan
         self.best_score = float('inf') # 初始化为无穷大，因为是最小化问题
-        
+        self.best_score_iter = 0  # 最优解出现的迭代代数
+
         # text, charts, logs
         self.total_score_list = []
         self.change_score_list = []
@@ -219,7 +224,7 @@ class SimulatedAnnealing:
         cur_score = cur_score_list[0]
         # 迭代次数计数器
         iteration = 0
-        increase_iteration = 0
+        noimprove_iter = 0
         result_folder = os.path.join(self.save_path, self.index)
         tUtils.ensure_folder(result_folder)
         
@@ -229,7 +234,7 @@ class SimulatedAnnealing:
             new_plan, d_diff = generate_new_plan(cur_plan, 
                                         self.ori_plan,
                                         T_ratio = cur_temp / self.t_0,
-                                        increase_step=increase_iteration,
+                                        noimprove_step=noimprove_iter,
                                         scale_minmax_dict=self.scale_minmax_dict,
                                         lu_labels=self.lu_labels,
                                         hard_restrict=self.hard_restrict,
@@ -252,28 +257,30 @@ class SimulatedAnnealing:
                                         cur_plan, cur_diff, cur_score_list, 
                                         cur_temp)
             # 更新迭代次数计数器
-            increase_iteration = increase_iteration + 1 if prev_score <= cur_score_list[0] else 0
+            noimprove_iter = noimprove_iter + 1 if prev_score <= cur_score_list[0] else 0
             # 更新当前分数
             cur_score = cur_score_list[0]
             # 更新记录目标函数项的列表
             self.update_score_lists(cur_score_list)
             
-            if iteration % self.print_frequency == 0:
-                print(f"\nStep {iteration}")
-                print(f"Increase_iteration: {increase_iteration}")
-                print(f"        温度: {cur_temp:.4f}, 当前分数={cur_score:.4f}, 最佳分数={self.best_score:.4f}")
-            
             # 更新全局最优解（最小化问题）
             if cur_score < self.best_score:
                 self.best_plan = cur_plan.clone()
                 self.best_score = cur_score
+                self.best_score_iter = iteration  # 更新最优解出现的迭代代数
                 print(f"============ step {iteration}: New best score = {self.best_score:.4f} ==============")
             
-            # 降温
-            cur_temp *= self.cooling_rate
-            iteration += 1
-            
+            # 是否提前终止？
+            if noimprove_iter >= self.max_noimprove_iter or \
+                    iteration - self.best_score_iter >= self.max_beststuck_iter:
+                print(f"SA提前终止，未改进连续{self.max_noimprove_iter}step 或 最优解停滞{self.max_beststuck_iter}step。")
+                break
+
             # 打印进度
+            if iteration % self.print_frequency == 0:
+                print(f"\nStep {iteration} noimprove_iter: {noimprove_iter} beststuck_iter: {self.best_score_iter}")
+                print(f"        温度: {cur_temp:.4f}, 当前分数={cur_score:.4f}, 最佳分数={self.best_score:.4f}")
+            
             if iteration % self.visualize_frequency == 0:
                 print(f"        change_score={cur_score_list[1]:.4f}, ES_score={cur_score_list[2]:.4f}, landscape_score={cur_score_list[4]:.4f}.")
                 tensor_dict = {
@@ -286,6 +293,9 @@ class SimulatedAnnealing:
                                             save_path=os.path.join(result_folder, 'history', f'iter_{iteration}.png'),
                                             figsize=(20, 6),
                                             color_map=COLOR_MAP)
+            # 降温
+            cur_temp *= self.cooling_rate
+            iteration += 1
         
         print(f"\n随机优化结束! 最佳分数: {self.best_score:.4f}")
 
