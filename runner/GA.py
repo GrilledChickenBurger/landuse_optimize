@@ -57,11 +57,10 @@ class GeneticAlgorithmStrategy:
         # 父本选择方法
         sel_type = self.config.get('parent_selection', 'roulette')
         if sel_type == 'roulette':
-            funcs['select_parents'] = self._roulette_select
-            # funcs['select_parents'] = lambda pool, fit, num: self._roulette_select(pool, fit, offspring_size=num)
+            funcs['select_parents'] = lambda pool, fit, **kwargs: self._roulette_select(pool, fit, **kwargs)
         elif sel_type == 'tournament':
             k = self.config.get('tournament_k', 2)
-            funcs['select_parents'] = lambda pool, fit, num: self._tournament_select(pool, fit, offspring_size=num, k=k)
+            funcs['select_parents'] = lambda pool, fit, **kwargs: self._tournament_select(pool, fit, k=k, **kwargs)
 
         # 未交叉处理
         nc_type = self.config.get('non_crossover_handling', 'copy')
