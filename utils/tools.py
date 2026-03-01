@@ -56,6 +56,63 @@ def repeat(func: callable, repeat_num: int, replace_element: Any, **kwargs) -> A
             e = res
     return e
 
+class PiecewiseLinear:
+    """
+    分段线性插值类
+    
+    Example:
+    --------
+        # 创建实例
+        pl = PiecewiseLinear([0, 10, 30, 50], [1.0, 1.3, 1.9, 2.0])
+        # 使用实例
+        result = pl(20)  # 在10和30之间线性插值
+        # result = 1.3 + (1.9-1.3)*(20-10)/(30-10) = 1.6
+    """
+    
+    def __init__(self, breakpoints: List[float], values: List[float]):
+        """
+        初始化分段线性插值器
+        
+        Parameters:
+        ----------
+            breakpoints: List[float], 分段点列表（必须按升序排列）
+            values: List[float], 对应分段点的值列表
+        """
+        if len(breakpoints) != len(values):
+            raise ValueError("分段点和值列表长度必须相同")
+        
+        # 确保分段点按升序排列
+        sorted_pairs = sorted(zip(breakpoints, values))
+        self.breakpoints = [pair[0] for pair in sorted_pairs]
+        self.values = [pair[1] for pair in sorted_pairs]
+        
+    def __call__(self, x: float) -> float:
+        """
+        计算分段线性插值结果
+        
+        Parameters:
+        ----------
+            x: float, 输入值
+            
+        Returns:
+        ----------
+            float: 分段线性插值结果
+        """
+        if x <= self.breakpoints[0]:
+            return self.values[0]
+        if x >= self.breakpoints[-1]:
+            return self.values[-1]
+        
+        # 找到x所在的分段区间
+        for i in range(len(self.breakpoints) - 1):
+            if self.breakpoints[i] <= x <= self.breakpoints[i + 1]:
+                # 线性插值
+                ratio = (x - self.breakpoints[i]) / (self.breakpoints[i + 1] - self.breakpoints[i])
+                return self.values[i] + ratio * (self.values[i + 1] - self.values[i])
+        
+        return self.values[-1]  # 理论上不会执行到这里
+
+
 def convert_to_nparray(array: Any) -> Optional[np.ndarray]:  
     """
     将输入转换为numpy数组.\n
@@ -154,8 +211,13 @@ def show_array_result(array: Any, title: Optional[str] = None, label: Optional[s
     plt.tight_layout()
     plt.show()
 
-def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor], main_title: str = 'Tensor Visualization',
-                        save_path: str = None, color_map: Union[Dict[Any, Tuple[float, float, float]], str] = None, figsize: Tuple[int, int] = None, layout: Tuple[int, int] = None) -> List[str]:
+def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor], 
+                        main_title: str = 'Tensor Visualization',
+                        save_path: str = None, 
+                        color_map: Union[Dict[Any, Tuple[float, float, float]], str] = None, 
+                        figsize: Tuple[int, int] = None, 
+                        layout: Tuple[int, int] = None,
+                        show: bool = False) -> List[str]:
     """
     通用张量可视化函数，支持自定义颜色映射和图像布局配置。
     
@@ -169,6 +231,7 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor], main_title: str 
         color_map: dict, 自定义颜色映射字典，格式为 {value: (r, g, b)}，其中r, g, b的范围为0-1
         figsize: tuple, 图像大小，格式为 (width, height)，默认根据张量数量自动计算
         layout: tuple, 子图布局，格式为 (rows, cols)，默认自动计算
+        show: bool, 是否显示图像，默认值为 False
     
     Returns:
     -------
@@ -292,7 +355,11 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor], main_title: str 
         plt.savefig(save_path, dpi=min(150, 300), bbox_inches='tight')  # 降低DPI避免尺寸过大
         saved_paths.append(save_path)
     
-    plt.close()
+    # 显示图像
+    if show:
+        plt.show()
+    else:
+        plt.close()
     return saved_paths
 
 

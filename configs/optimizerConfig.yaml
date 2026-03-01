@@ -1,6 +1,6 @@
 # 随机优化算法运行配置文件
 device:
-  use_gpu: false
+  use_gpu: true
 
 data:
   root: "_data\\optimize_data"
@@ -104,5 +104,61 @@ GA:
     "elite_mutation": False
 
 output:
-  save_result: false  # 是否保存优化结果
-  save_path: "results\\optimize_data"  # 结果保存目录
+  save_result: false # 是否保存优化结果
+  save_path: "results\\optimize_data" # 结果保存目录
+
+
+# # 实验配置列表
+# experiments = [
+#     {   # GA1 (基准)
+#         'parent_pool': 'all',
+#         'parent_selection': 'roulette',
+#         'elite_ratio': 0.1,
+#         'non_crossover_handling': 'copy',
+#         'elite_mutation': False
+#     },
+#     {   # GA2
+#         'parent_pool': 'all',
+#         'parent_selection': 'tournament',
+#         'tournament_k': 2,
+#         'elite_ratio': 0.1,
+#         'non_crossover_handling': 'copy',
+#         'elite_mutation': False
+#     },
+#     {   # GA3
+#         'parent_pool': 'elite',
+#         'elite_ratio_for_pool': 0.2,   # 父本来源的前20%
+#         'parent_selection': 'roulette',
+#         'elite_ratio': 0.1,
+#         'non_crossover_handling': 'copy',
+#         'elite_mutation': False
+#     },
+#     {   # GA4
+#         'parent_pool': 'all',
+#         'parent_selection': 'roulette',
+#         'elite_ratio': 0.0,
+#         'non_crossover_handling': 'copy',
+#         'elite_mutation': False
+#     },
+#     {   # GA5
+#         'parent_pool': 'all',
+#         'parent_selection': 'roulette',
+#         'elite_ratio': 0.5,
+#         'non_crossover_handling': 'copy',
+#         'elite_mutation': False
+#     },
+#     {   # GA6
+#         'parent_pool': 'all',
+#         'parent_selection': 'roulette',
+#         'elite_ratio': 0.1,
+#         'non_crossover_handling': 'copy_mutate',
+#         'elite_mutation': False
+#     },
+#     {   # GA7
+#         'parent_pool': 'all',
+#         'parent_selection': 'roulette',
+#         'elite_ratio': 0.1,
+#         'non_crossover_handling': 'copy',
+#         'elite_mutation': True
+#     }
+# ]
