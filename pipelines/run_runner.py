@@ -2,16 +2,13 @@
 from argparse import Namespace
 import os
 from datetime import datetime
-
 from typing import Dict, Any, List
 import yaml
 import torch
 from torch.utils.data import DataLoader
-
-
 # 导入优化器模块
 from runner import create_runner
-from runner.SA import SA
+from runner.SA import SimulatedAnnealing
 # 导入数据加载模块
 from datasets.base_dataloader import get_dataset
 from utils.calculator_utils import train_maxent
@@ -68,26 +65,26 @@ def pipeline(config_path: str,
     train_maxent(config.data.root, config.data.year, maxent_path)
 
     # 5. 选择并运行对应的优化器
-    optimizer_config = config.optimizer
-    use_landscape = optimizer_config.use_landscape  # 是否使用景观破碎化约束
-    optimize_num = optimizer_config.optimize_num  # 优化样本数量
-    type_config = getattr(config, optimizer_config.type)  # 优化器类型配置, SA|GA
-    scenario = optimizer_config.scenario  # scenario类型
+    runner_config = config.runner
+    use_landscape = runner_config.use_landscape  # 是否使用景观破碎化约束
+    optimize_num = runner_config.optimize_num  # 优化样本数量
+    type_config = getattr(config, runner_config.type)  # 优化器类型配置, SA|GA
+    scenario = runner_config.scenario  # scenario类型
     if scenario == "all":
-        scenario_list = [name for name in vars(optimizer_config.weight).keys()]
+        scenario_list = [name for name in vars(runner_config.weight).keys()]
     else:
         scenario_list = [scenario]
     # 若已处理过数据则使用已处理时间戳，否则使用当前时间戳
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S") if not is_processed else processed_timestamp
 
     # 6. 运行优化器
-    print(f"\n================= 随机优化类型: 【{optimizer_config.type}】 =================")
+    print(f"\n================= 随机优化类型: 【{runner_config.type}】 =================")
     print(f"  优化样本数量: {optimize_num}")
     print(f"  使用景观破碎化约束: {use_landscape}")
 
     # 7. 遍历每个scenario
     for current_scenario in scenario_list: 
-        weight_dict = vars(getattr(optimizer_config.weight, current_scenario))
+        weight_dict = vars(getattr(runner_config.weight, current_scenario))
         
         print(f"\n================= 当前 scenario: 【{current_scenario}】 =================")
         print(f"  权重配置: {weight_dict}")
@@ -117,8 +114,9 @@ def pipeline(config_path: str,
                 
             # 运行对应优化器
             type_runner = create_runner(
-                runner_type=optimizer_config.type,
+                runner_type=runner_config.type,
                 config=type_config,
+                common_config=runner_config.common_params,
                 model_config=config.model,
                 device=device,
                 data_dict=data_dict,

@@ -50,7 +50,7 @@ def train_maxent(root: str, year: str, save_path: str) -> None:
         save_path: str, path to save the maxent dataset
     """
     print("================= Prior: MaxEnt Training... =================")
-    data_path = os.path.join(root, f'valid_{year}', '_maxent')
+    data_path = os.path.join(root, f"valid_{year}", "_maxent")
     train_pipeline(data_path, save_path)
     print("================= Prior: MaxEnt Training Done. =================")
 

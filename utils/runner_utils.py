@@ -16,7 +16,7 @@ from .dataset_utils import apply_norm, one_hot_lu
 from .tools import ensure_folder, convert_to_nparray, draw_single_line, draw_multi_line, save_tif
 
 
-def load_ANN_model(model_type: str, model_path: str, in_ch: int, out_ch: int, device: torch.device, model_config: Namespace=None) -> torch.nn.Module:
+def load_ANN_model(model_type: str, model_path: str, in_ch: int, out_ch: int, device: torch.device=None, model_config: Namespace=None) -> torch.nn.Module:
     """加载ANN模型检查点\n
     Parameters:
     ----------
@@ -37,13 +37,36 @@ def load_ANN_model(model_type: str, model_path: str, in_ch: int, out_ch: int, de
         out_ch=out_ch,
         model_config=model_config
     )
-
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model = model.to(device)  # 确保模型被移动到指定设备上
-    return model
+    try:
+        # 尝试加载模型检查点
+        checkpoint = torch.load(model_path, map_location=device)
+        model.load_state_dict(checkpoint)
+        model = model.to(device)  # 确保模型被移动到指定设备上
+        return model
+    except RuntimeError as e:
+        # 处理模型参数不匹配的错误
+        if "size mismatch" in str(e) or "Missing key(s)" in str(e) or "Unexpected key(s)" in str(e):
+            print(f"错误: 模型检查点与模型结构不匹配!")
+            print(f"模型类型: {model_type}")
+            print(f"输入通道数: {in_ch}")
+            print(f"输出通道数: {out_ch}")
+            print(f"检查点路径: {model_path}")
+            raise RuntimeError(f"模型加载失败: {e}") from e
+        else:
+            # 其他运行时错误
+            print(f"错误: 加载模型检查点时发生异常")
+            print(f"错误信息: {e}")
+            raise
+    except FileNotFoundError:
+        print(f"错误: 找不到模型检查点文件: {model_path}")
+        raise
+    except Exception as e:
+        # 处理其他未知错误
+        print(f"错误: 加载模型时发生未知异常: {e}")
+        raise
 
 def get_pred_diff(model: torch.nn.Module, 
                     ori_plan: torch.Tensor, 
@@ -63,6 +86,7 @@ def get_pred_diff(model: torch.nn.Module,
         year: str, 年份, 可选值为 '10', '15', '20'
         condition_list: List[str], 驱动因子列表, 必须和factors中的channel顺序对应
         normalize: bool, 是否对因子进行标准化, default=False
+    
     Returns:
     --------
         pred_diff: tensor, [1,1,128,128], 0-1 二值张量，0表示预测不变，1表示预测将发生变化
@@ -80,12 +104,13 @@ def get_pred_diff(model: torch.nn.Module,
     
     ori_plan_onehot = one_hot_lu(ori_plan[0]).unsqueeze(0)
 
-    cond = torch.cat((ori_plan_onehot,factors),dim=1).to(device)
+    # 注意concat的顺序！！！！！
+    cond = torch.cat((factors, ori_plan_onehot),dim=1).to(device)
     pred_diff_raw = model(cond)
     pred_diff=F.sigmoid(pred_diff_raw)
-    pred_diff=(pred_diff>=0.5).int()
+    # pred_diff=(pred_diff>=0.5).int()
 
-    return pred_diff.cpu()
+    return pred_diff.detach().cpu()
 
 def get_cls_restrict_area(ori_plan: torch.Tensor) -> torch.Tensor:
     """
@@ -224,6 +249,51 @@ def draw_score_list(score_list_data: List[Union[List[float], Dict[str, List[floa
                             title='Ecosystem Services', 
                             save_path=save_path)
 
+def draw_score_list_general(score_list_data: List[List[float]], 
+                            title_list: List[str] = None, 
+                            save_folder: str = None,
+                            multi: bool = False) -> None:
+    """
+    更通用的绘制目标函数项的变化曲线\n
+    Parameters:
+    ----------
+        score_list_data: List[List[float]], 数据列表, 每个元素为一个目标函数项的变化列表
+        title_list: List[str], 图表标题列表
+        save_folder: str, 图表保存文件夹
+        multi: bool, 是否将多条曲线绘制在一张图上
+    """
+    ensure_folder(save_folder)
+    if title_list is None:
+        title_list = [f'Score_{i}' for i in range(len(score_list_data))]
+    
+    if len(score_list_data) != len(title_list):
+        raise ValueError("score_list_data and title_list must have the same length")
+
+    if multi:
+        # 将多条曲线绘制在一张图上
+        # 检查所有数据列表长度是否一致
+        data_lengths = [len(data) for data in score_list_data]
+        if len(set(data_lengths)) > 1:
+            raise ValueError("All data lists must have the same length when multi=True")
+        
+        length = data_lengths[0]
+        steps = list(range(1, length + 1))
+        
+        save_path = os.path.join(save_folder, 'Multi_Scores.png')
+        draw_multi_line(steps, score_list_data, title_list, 
+                        x_label='Step', y_label='score',
+                        title='Multi Scores', 
+                        save_path=save_path)
+    else:
+        # 将每条曲线分别绘制在单独的图上
+        for i, score_data in enumerate(score_list_data):
+            length = len(score_data)
+            steps = list(range(1, length + 1))
+            save_path = os.path.join(save_folder, f'{title_list[i]}.png')
+            draw_single_line(steps, score_data, title_list[i], 
+                            x_label='Step', y_label='score',
+                            title=title_list[i],
+                            save_path=save_path)
 
 
 def save_all_plans(ori_plan: torch.Tensor, best_plan: torch.Tensor, final_plan: torch.Tensor, index: str, 

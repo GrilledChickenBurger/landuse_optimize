@@ -6,7 +6,7 @@ import copy
 import torch
 import numpy as np
 from libs.const import PIXEL_NUM_THRESHOLD_ISCHANGE, COLOR_MAP
-from generator.sa import generate_new_plan
+from generator.sa_generator import generate_new_plan
 from calculator.tgt_function_cal import cal_tgt_function
 from utils.performance import write_performance_score
 import utils.calculator_utils as cUtils
@@ -15,14 +15,15 @@ import utils.dataset_utils as dUtils
 import utils.tools as tUtils
 
 
-class SA:
+class SimulatedAnnealing:
     """
     模拟退火优化器类
     用于土地利用规划优化
     """
     def __init__(     
             self,       
-            config: Any,
+            config: Namespace,
+            common_config: Namespace,
             model_config: Namespace,
             device: torch.device,
             data_dict: Dict[str, torch.Tensor],
@@ -36,9 +37,11 @@ class SA:
         Parameters:
         ----------
         config : ConfigObject
-            配置对象，包含所有必要的参数
+            SA配置对象，包含SA所需的必要的参数
+        common_config : Namespace
+            SA和GA的公共配置对象，包含路径在内的公共参数
         model_config : Namespace
-            模型配置对象，包含模型类型.type和参数
+            模型配置对象，包含模型类型.type 模型路径.model_path和参数
         device : torch.device
             运行设备（CPU/GPU）
         data_dict : Dict[str, torch.Tensor]，包含所有驱动因子和生态系统服务数据的字典
@@ -49,12 +52,12 @@ class SA:
             ... : 其他数据, 如生态系统服务数据和驱动因子数据
         index : str, year_idx_delta, 如 '10_764_5'
             土地利用索引
+        save_path : str
+            结果保存路径
         weight_dict : Dict, optional
             权重类型，默认为 'default'对应的权重字典
         use_landscape : bool, optional
             是否使用景观破碎化约束，默认为 True
-        timestamp : str, optional
-            运行时间戳，用于结果保存目录
         """
         print("================= SA Initing... =================")
         
@@ -76,14 +79,14 @@ class SA:
         self.year = index.split('_')[0]
         model_type = model_config.type
         type_config = getattr(model_config, model_type, None)
-        ANN_model = rUtils.load_ANN_model(model_type, config.ANN_model_path, 
+        ANN_model = rUtils.load_ANN_model(model_type, model_config.model_path, 
                                 self.factors.shape[1]+6, 1, device,
                                 type_config)
         self.pred_diff = rUtils.get_pred_diff(ANN_model, self.ori_plan, self.factors, self.device,
                                                 year=self.year,
                                                 condition_list= ["DEM", "DL", "GDP", "RK"] ,
                                                 normalize=True)
-        self.frg_model_path = config.frg_model_path  # fragstats模型路径
+        self.frg_model_path = common_config.frg_model_path  # fragstats模型路径
 
         # LU方案相关信息
         self.lu_labels = rUtils.get_lu_labels(self.ori_plan)
@@ -103,9 +106,9 @@ class SA:
                                     self.ori_plan,
                                     self.pred_diff,
                                     data_dict,
-                                    config.carbon_pool_path, 
-                                    config.maxent_model_path.format(year=self.year),
-                                    config.maxent_list)
+                                    common_config.carbon_pool_path, 
+                                    common_config.maxent_model_path.format(year=self.year),
+                                    common_config.maxent_list)
         if self.use_landscape:
             ori_distance_map_dict = cUtils.get_lu_distancemap_dict(self.ori_plan)
             ori_num_feature_dict = cUtils.get_numfeature_dict(self.ori_plan)
@@ -254,7 +257,7 @@ class SA:
             cur_score = cur_score_list[0]
             # 更新记录目标函数项的列表
             self.update_score_lists(cur_score_list)
-
+            
             if iteration % self.print_frequency == 0:
                 print(f"\nStep {iteration}")
                 print(f"Increase_iteration: {increase_iteration}")
@@ -272,7 +275,6 @@ class SA:
             
             # 打印进度
             if iteration % self.visualize_frequency == 0:
-                print(f"        温度: {cur_temp:.4f}, 当前分数: {cur_score:.4f}, 最佳分数: {self.best_score:.4f}")
                 print(f"        change_score={cur_score_list[1]:.4f}, ES_score={cur_score_list[2]:.4f}, landscape_score={cur_score_list[4]:.4f}.")
                 tensor_dict = {
                     'ori_plan': self.ori_plan,
@@ -294,13 +296,12 @@ class SA:
 
         rUtils.save_all_plans(self.ori_plan, self.best_plan, self.final_plan, self.index, 
                         os.path.join(result_folder, f'plans_{idx}'),
-                        raw_data_root=None)
+                        'D:\\_programming\\_LAB_ASSIGMENTS\\AAAAA栅格分割')
         # 写入性能指标
         scores = write_performance_score(self.best_plan, self.ori_plan, self.final_plan, self.pred_diff,
                                 self.info_dict,
                                 src_folder=os.path.join(result_folder, f'plans_{idx}'),
                                 output_folder=os.path.join(result_folder, f'performance_{idx}'),
-                                landscape=False,
                                 frg_model_path=self.frg_model_path,
                                 )               
         output_file = os.path.join(result_folder, 'performance_score.json')

@@ -121,6 +121,8 @@ def area_wise_change(cur_plan: torch.Tensor, scale: str, scale_minmax_dict: Dict
     # 从lu_labels列表中随机选择新的像素值，但排除0值
     # cls_restrict: 原类型是51或53
     # 确保新标签不包含0值
+    if lu_labels is None or len(lu_labels) == 0:
+        lu_labels = torch.unique(cur_plan).tolist()
     valid_labels = [l for l in lu_labels if l != 0]
 
     if (cls_restrict[0, 0, start_y:end_y, start_x:end_x] == 1).any():

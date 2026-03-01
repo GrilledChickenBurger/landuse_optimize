@@ -393,5 +393,5 @@ def train_pipeline(root, save_path):
 #     train_with_alldata(csv, rasters,labels=labels, save_path=model_path, show_plot=False)
 
 #     result_name = 'demo-maxent-predictions.tif'
-#     result_folder = os.path.join(data_path, 'output')
+#     result_folder = data_path + '\\' + 'output'
 #     predict_and_save_raster(model_path, rasters, result_folder=result_folder, result_name=result_name)

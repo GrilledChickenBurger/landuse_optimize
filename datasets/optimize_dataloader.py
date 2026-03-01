@@ -33,7 +33,7 @@ def load_optimize_data(
     print(f"\n================= 开始加载随机优化数据集【{year}】... =================")
     root_ori = os.path.join(root, f"valid_{year}")
     root_tgt = os.path.join(root, f"valid_{str(int(year)+5)}") 
-    if year!= "20":
+    if year == "20":  # 2020年没有后续年份，使用2020作为目标年份
         root_tgt = os.path.join(root, "valid_20")
     cond_list = condition_list[:]
     cond_list.append("RA")
