@@ -243,7 +243,7 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor],
     # 处理张量形状，确保为2D
     processed_tensors = {}
     for name, tensor in tensor_dict.items():
-        processed_tensor = tensor.cpu().squeeze()  # 移到CPU，压缩所有尺寸为1的维度
+        processed_tensor = tensor.detach().cpu().squeeze()  # 移到CPU，压缩所有尺寸为1的维度
         if len(processed_tensor.shape) != 2:
             raise ValueError(f"张量 '{name}' 处理后形状应为 [height, width]，当前形状：{processed_tensor.shape}")
         processed_tensors[name] = convert_to_nparray(processed_tensor)  # 转换为numpy数组
