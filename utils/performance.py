@@ -11,6 +11,7 @@ from sklearn.metrics import confusion_matrix
 from calculator.cal_es_score import cal_es_value, get_es_cal_func_dict
 from utils.tools import ensure_folder
 from utils.dataset_utils import remove_lines
+from libs.const import PIXEL_AREA_IN_HECTARES
 
 def calculate_FOM(ori, pred, true):
     """
@@ -61,6 +62,54 @@ def calculate_kappa(pred, true):
     kappa = (p_o - p_e) / (1 - p_e)
 
     return kappa
+
+def calculate_landuse_area_statistics(plan1: torch.Tensor, plan1_name: str, 
+                                        plan2: torch.Tensor, plan2_name: str, lu_labels: List[int] = None):
+    """
+    计算两个土地利用方案之间各landuse类型的面积变化统计
+    
+    参数:
+        plan1: 第一个土地利用方案，形状为[1,128,128]
+        plan2: 第二个土地利用方案，形状为[1,128,128]
+        lu_labels: 土地利用类别列表，如果为None则自动从两个方案中提取
+    
+    返回:
+        area_stats: 包含各landuse类型面积统计的字典
+    """
+    # 确保plan是numpy数组并展平
+    plan1_flat = plan1.squeeze(0).numpy().flatten()
+    plan2_flat = plan2.squeeze(0).numpy().flatten()
+    
+    # 获取土地利用类别列表
+    if lu_labels is None:
+        lu_labels = list(set(np.unique(plan1_flat)) | set(np.unique(plan2_flat)))
+        lu_labels.sort()
+    
+    area_stats = {}
+    
+    for lu_type in lu_labels:
+        # 计算每个landuse类型的像素数量
+        area1_pixels = np.sum(plan1_flat == lu_type)
+        area2_pixels = np.sum(plan2_flat == lu_type)
+        
+        # 转换为公顷面积
+        area1_hectares = area1_pixels * PIXEL_AREA_IN_HECTARES
+        area2_hectares = area2_pixels * PIXEL_AREA_IN_HECTARES
+        
+        # 计算面积变化
+        area_change_hectares = area2_hectares - area1_hectares
+        
+        # 计算变化比例（相对于plan1的面积）
+        change_ratio = area_change_hectares / area1_hectares if area1_hectares > 0 else 0.0
+        
+        area_stats[lu_type] = {
+            plan1_name: area1_hectares,
+            plan2_name: area2_hectares,
+            'change_hectares': area_change_hectares,
+            'change_ratio': change_ratio,
+        }
+    
+    return area_stats
 
 ###################################################################
 #####################  performance: 变化区域  #####################
@@ -395,7 +444,7 @@ def write_performance_score(best_plan: torch.Tensor,
     
     # 3. landscape
     land_dict = {}
-    if landscape:
+    if landscape and frg_model_path is not None:
         cls_list = ['LPI','LSI','AI','ED']
         land_list = ['LPI','LSI','AI','ED','SHEI','SHDI','CONTAG']
         create_frg_csv(src_folder, f'{tmp_folder}\\batch.csv')
@@ -408,6 +457,15 @@ def write_performance_score(best_plan: torch.Tensor,
     # FINAL: FOM, kappa
     performance_score['FINAL']['FOM'] = calculate_FOM(ori_plan, best_plan, tgt_plan)
     performance_score['FINAL']['kappa'] = calculate_kappa(best_plan, tgt_plan)
+    
+    # 获取土地利用类别列表
+    lu_labels = list(set(np.unique(ori_plan.numpy())) | set(np.unique(best_plan.numpy())) | set(np.unique(tgt_plan.numpy())))
+    lu_labels.sort()
+    
+    # 计算best plan相比ori plan的面积变化统计
+    performance_score['FINAL']['best_ori'] = calculate_landuse_area_statistics(ori_plan, 'ori_plan', best_plan, 'best_plan', lu_labels)
+    # 计算best plan相比tgt plan的面积变化统计
+    performance_score['FINAL']['best_tgt'] = calculate_landuse_area_statistics(tgt_plan, 'tgt_plan', best_plan, 'best_plan', lu_labels)
 
     with open(output_path,'w') as file:
         json.dump(performance_score, file, indent=4)  
@@ -415,3 +473,46 @@ def write_performance_score(best_plan: torch.Tensor,
 
     print(f"Done. The performance scores has been saved to {output_path}.\n")
     return performance_score
+
+
+def only_landscape(src_folder: str, tmp_folder: str, 
+                    frg_model_path: str, 
+                    metric_list: List[str] = None) -> Dict[str, Dict]:
+    """
+    只计算Landscape的指标
+
+    Parameters:
+    ------------
+        src_folder: str, 原始方案的文件夹
+        tmp_folder: str, 保存运行时输出文件的临时文件夹
+        frg_model_path: str, fragstats模型路径
+        metric_list: 要计算的景观指标列表
+    
+    Returns:
+    --------
+        land_dict: dict, 包含每个指标的计算结果, 结构为
+        "land": {
+            "best_plan": {
+                "LPI": "35.5896",
+                "LSI": "5.0059",
+                "AI": "95.0366",
+                "ED": "1251.8311",
+                "SHEI": "0.6679",
+                "SHDI": "1.7131",
+                "CONTAG": "60.4539"
+            },
+            "ori_plan": {
+                ...
+            },
+            "tgt_plan": {
+                ...
+            }
+        }
+    """
+    cls_list = ['LPI','LSI','AI','ED']
+    land_list = ['LPI','LSI','AI','ED','SHEI','SHDI','CONTAG']
+    create_frg_csv(src_folder, f'{tmp_folder}\\batch.csv')
+    frg_cmd(frg_model_path, f'{tmp_folder}\\batch.csv', tmp_folder)
+    # cls_dict = get_cls_landscape_index(output_folder, cls_list)
+    land_dict = get_land_landscape_index(tmp_folder, land_list)
+    return land_dict
