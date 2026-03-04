@@ -5,7 +5,7 @@ from typing import Dict, Any, List, Optional, Union, Tuple
 import copy
 import torch
 import numpy as np
-from libs.const import PIXEL_NUM_THRESHOLD_ISCHANGE, COLOR_MAP
+from libs.const import *
 from generator.sa_generator import generate_new_plan
 from calculator.tgt_function_cal import cal_tgt_function
 from utils.performance import write_performance_score
@@ -301,23 +301,23 @@ class SimulatedAnnealing:
 
         # 保存最佳方案
         idx = self.index.split("_")[1]
-        best_diff = torch.from_numpy(dUtils.remove_lines(self.best_plan != self.ori_plan))
-        self.best_plan = torch.where(best_diff==1, self.best_plan, self.ori_plan)
-
-        rUtils.save_all_plans(self.ori_plan, self.best_plan, self.final_plan, self.index, 
-                        os.path.join(result_folder, f'plans_{idx}'),
-                        raw_data_root=None)
-        # 写入性能指标
-        scores = write_performance_score(self.best_plan, self.ori_plan, self.final_plan, self.pred_diff,
-                                self.info_dict,
-                                src_folder=os.path.join(result_folder, f'plans_{idx}'),
-                                output_folder=os.path.join(result_folder, f'performance_{idx}'),
-                                landscape=False,
-                                frg_model_path=self.frg_model_path,
-                                )               
-        output_file = os.path.join(result_folder, 'performance_score.json')
-        with open(output_file,'w') as file:
-            json.dump(scores, file, indent=4)  
+        # 使用通用函数保存优化结果
+        plan_folder = os.path.join(result_folder, f'plans_{idx}')
+        tmp_folder = os.path.join(result_folder, f'performance_{idx}')
+        perf_path = os.path.join(result_folder, 'performance.json')
+        rUtils.save_plan_and_get_performance(
+            best_plan=self.best_plan,
+            ori_plan=self.ori_plan,
+            final_plan=self.final_plan,
+            pred_diff=self.pred_diff,
+            info_dict=self.info_dict,
+            index=self.index,
+            plan_folder=plan_folder,
+            tmp_folder=tmp_folder,
+            perf_path=perf_path,
+            frg_model_path=self.frg_model_path,
+            raw_data_root=None
+        )
         # 绘制目标函数项的变化趋势图
         score_list_data = [self.total_score_list, self.change_score_list, self.es_score_list, self.landscape_score_list, self.es_dict ]
         rUtils.draw_score_list(score_list_data, ['total_score', 'change_score', 'ES_score', 'landscape_score'],

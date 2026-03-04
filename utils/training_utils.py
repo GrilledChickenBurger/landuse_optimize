@@ -5,8 +5,6 @@ import torch
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
-from sklearn.metrics import confusion_matrix
-from utils.performance import calculate_OA, calculate_kappa
 
 def get_optimizer(name, parameters, learning_rate, weight_decay,
                   beta_1, amsgrad=False, epsilon=1e-7, maximize=False):
@@ -250,9 +248,9 @@ class MetricsMeter(object):
         
         # 计算各项指标
         self.current_metrics = {
-            'accuracy': (TP + TN) / (total_pixels + 1e-6),
-            'precision': TP / (TP + FP + 1e-6),
-            'recall': TP / (TP + FN + 1e-6),
+            'accuracy(OA)': (TP + TN) / (total_pixels + 1e-6),
+            'precision(UA)': TP / (TP + FP + 1e-6),
+            'recall(PA)': TP / (TP + FN + 1e-6),
             'f1_score': 2 * TP / (2 * TP + FP + FN + 1e-6),
             'iou': TP / (TP + FP + FN + 1e-6),
             'tp': TP,

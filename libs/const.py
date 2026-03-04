@@ -129,13 +129,19 @@ FACTOR_20_PARAMS_DICT={
     }
 }
 
+# 标准化中所有需要进行对数变换的因子
 ALL_LOG_FACTORS = ["GDP", "RK", "DL"]
 
+# 每个年份不同因子的归一化参数字典
 FACTOR_PARAMS_DICT={
     "10": FACTOR_10_PARAMS_DICT,
     "15": FACTOR_15_PARAMS_DICT,
     "20": FACTOR_20_PARAMS_DICT,
 }
+
+# 原始数据根目录, 保存着tif文件配套的tfw等文件
+# 若需要frg模型评估方案, 则待评估方案需要从此处复制tfw文件
+RAW_DATA_ROOT = 'D:\\_programming\\_LAB_ASSIGMENTS\\AAAAA栅格分割'
 
 FACTORS_NAME_DICT = {
     'RA': '耕地红线(不可变更)',

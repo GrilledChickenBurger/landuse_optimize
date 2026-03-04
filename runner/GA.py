@@ -6,10 +6,9 @@ from typing import Dict, Any, List, Optional, Union, Tuple
 import copy
 import torch
 import numpy as np
-from libs.const import PIXEL_NUM_THRESHOLD_ISCHANGE, COLOR_MAP
+from libs.const import *
 from generator.ga_generator import initial_new_population, crossover, mutate
 from calculator.tgt_function_cal import cal_tgt_function
-from utils.performance import write_performance_score
 import utils.calculator_utils as cUtils
 import utils.runner_utils as rUtils
 import utils.dataset_utils as dUtils
@@ -278,7 +277,13 @@ class GeneticAlgorithm:
         # 流程提前结束条件
         self.max_noimprove_gen = config.max_noimprove_gen  # 最大无改进迭代次数
         self.max_beststuck_gen = config.max_beststuck_gen  # 最优解停滞阈值
-        
+        self.max_noimprove_gen_interpolator = tUtils.PiecewiseLinear(
+                                    [0.2, 1], 
+                                    [config.max_noimprove_gen, config.max_noimprove_gen//2])
+        self.max_beststuck_gen_interpolator = tUtils.PiecewiseLinear(
+                                    [0.2, 1], 
+                                    [config.max_beststuck_gen, config.max_beststuck_gen//4])
+
         # 包装mutate函数，预先传入固定参数
         self.mutate_func = self._create_mutate_wrapper()
         self.crossover_func = crossover
@@ -547,6 +552,18 @@ class GeneticAlgorithm:
         # 综合计算并限制范围: 种群大小在[final_pop_size, ori_pop_size*2]之间
         self.pop_size = max(self.final_pop_size, min(self.ori_pop_size*2, int(base_size * factor)))
 
+    def adaptive_noimprove_threshold(self, gen_ratio: float):
+        """
+        自适应最大无改进迭代次数 和 最大最佳停滞迭代次数
+        根据遗传代数比例gen_ratio，下调最大无改进迭代次数\n
+        Parameters:
+        ----------
+            gen_ratio: float, 遗传代数比例
+        """
+        self.max_noimprove_gen = self.max_noimprove_gen_interpolator(gen_ratio)
+        self.max_beststuck_gen = self.max_beststuck_gen_interpolator(gen_ratio)
+
+
     def fitness(self, population: List[torch.Tensor], ) -> List:
         """
         评估当前种群的适应度, 返回得分列表 ,为后续选择父母、挑选精英个体做准备\n
@@ -662,8 +679,9 @@ class GeneticAlgorithm:
                 print(f"GA提前终止，未改进连续{self.max_noimprove_gen}代 或 最优解停滞{self.max_beststuck_gen}代。")
                 break
 
-            # --- 自适应种群大小 ---
+            # --- 自适应种群大小、最大无改进迭代次数、最大最佳停滞迭代次数 ---
             self.adaptive_pop_size(gen_ratio=gen/self.max_gen)
+            self.adaptive_noimprove_threshold(gen_ratio=gen/self.max_gen)
 
             # --- 选择父本池: all / elite ---
             pool_indices = self.strategy['get_parent_pool'](population, fitness_list)
@@ -682,8 +700,8 @@ class GeneticAlgorithm:
             offspring = offspring[:self.pop_size]
             
             # --- 精英保留: 0 / 0.1 / 0.5 ---
-            elite_num = int(self.pop_size * self.elite_ratio)
-            if elite_num > 0:
+            if self.elite_ratio > 0:
+                elite_num = max(1, int(self.pop_size * self.elite_ratio))
                 # 选出当前最优个体
                 elite_indices = np.argsort(fitness_list)[-elite_num:]
                 elites = [population[i].clone() for i in elite_indices]
@@ -700,7 +718,7 @@ class GeneticAlgorithm:
                 self.best_score = cur_score
                 self.best_score_generation = gen  # 记录最优解出现的代数
                 print(f"============ step {gen}: New best score = {self.best_score:.4f} ==============")
-            
+
             # 打印进度
             if gen % self.print_frequency == 0:
                 print(f"\nStep {gen} noimprove_step={noimprove_step} beststuck_gen={gen - self.best_score_generation}")
@@ -716,21 +734,23 @@ class GeneticAlgorithm:
 
         # 保存最佳方案
         idx = self.index.split("_")[1]
-        best_diff = torch.from_numpy(dUtils.remove_lines(self.best_plan != self.ori_plan))
-        self.best_plan = torch.where(best_diff==1, self.best_plan, self.ori_plan)
-
-        rUtils.save_all_plans(self.ori_plan, self.best_plan, self.final_plan, self.index, 
-                        os.path.join(result_folder, f'plans_{idx}'),
-                        'D:\\_programming\\_LAB_ASSIGMENTS\\AAAAA栅格分割')
-        # 写入性能指标
-        scores = write_performance_score(self.best_plan, self.ori_plan, self.final_plan, self.pred_diff,
-                                self.info_dict,
-                                src_folder=os.path.join(result_folder, f'plans_{idx}'),
-                                frg_model_path=self.frg_model_path,
-                                output_folder=os.path.join(result_folder, f'performance_{idx}'))               
-        output_file = os.path.join(result_folder, 'performance_score.json')
-        with open(output_file,'w') as file:
-            json.dump(scores, file, indent=4)          
+        # 使用通用函数保存优化结果
+        plan_folder = os.path.join(result_folder, f'plans_{idx}')
+        tmp_folder = os.path.join(result_folder, f'performance_{idx}')
+        perf_path = os.path.join(result_folder, 'performance.json')
+        rUtils.save_plan_and_get_performance(
+            best_plan=self.best_plan,
+            ori_plan=self.ori_plan,
+            final_plan=self.final_plan,
+            pred_diff=self.pred_diff,
+            info_dict=self.info_dict,
+            index=self.index,
+            plan_folder=plan_folder,
+            tmp_folder=tmp_folder,
+            perf_path=perf_path,
+            frg_model_path=self.frg_model_path,
+            raw_data_root=RAW_DATA_ROOT
+        )
         # 绘制目标函数项的变化趋势图
         score_list_data = [
             self.total_score_list,  # 最佳个体总得分
