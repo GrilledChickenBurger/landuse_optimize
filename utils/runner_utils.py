@@ -309,6 +309,9 @@ def save_all_plans(ori_plan: torch.Tensor, best_plan: torch.Tensor, final_plan: 
         result_path: str, 结果保存路径
         raw_data_root: str, 原始数据根目录, 用于复制TFW文件; 若为None, 则不复制TFW文件
     """
+    # 确保保存文件夹存在
+    ensure_folder(save_folder)
+
     save_tif(best_plan, output_folder=save_folder,output_filename='best_plan.TIF')
     save_tif(ori_plan, output_folder=save_folder,output_filename='ori_plan.TIF')
     save_tif(final_plan, output_folder=save_folder,output_filename='tgt_plan.TIF')
@@ -324,3 +327,60 @@ def save_all_plans(ori_plan: torch.Tensor, best_plan: torch.Tensor, final_plan: 
             shutil.copy(path, os.path.join(save_folder, 'best_plan.tfw'))
             shutil.copy(path, os.path.join(save_folder, 'ori_plan.tfw'))
             shutil.copy(path, os.path.join(save_folder, 'tgt_plan.tfw'))
+
+
+def save_plan_and_get_performance(best_plan: torch.Tensor, 
+                           ori_plan: torch.Tensor, 
+                           final_plan: torch.Tensor, 
+                           pred_diff: torch.Tensor, 
+                           info_dict: dict, index: str, 
+                           plan_folder: str,
+                           tmp_folder: str,
+                           perf_path: str, 
+                           frg_model_path: str = None, 
+                           raw_data_root: str = None) -> dict:
+    """保存并评估优化结果。\n
+    - `save_all_plans`在{plan_folder}中保存最优解、初始解和目标解的土地利用方案为TIFF文件, 
+    - `write_performance_score`读取{plan_folder}中的方案后开始评估对比，在{tmp_folder}中保存中间结果，最后在{perf_path}中保存性能指标。
+    
+    Parameters:
+    ----------
+        best_plan: torch.Tensor, SA|GA直接输出的最优解土地利用方案
+        ori_plan: torch.Tensor, 原始解土地利用方案
+        final_plan: torch.Tensor, 目标解土地利用方案
+        pred_diff: torch.Tensor, 预测变化区域
+        info_dict: dict, 信息字典
+        index: str, 数据索引
+        plan_folder: str, 方案保存文件夹
+        tmp_folder: str, 临时文件夹, 用于存储中间结果
+        perf_path: str, 性能指标保存路径, e.g. 'sample_idx/performance.json'
+        frg_model_path: str, fragstats模型路径
+        raw_data_root: str, 用于复制TFW文件的原始数据根目录，若为None, 则不复制TFW文件
+        
+    Returns:
+    --------
+        dict: 性能评估结果
+    """
+    from utils.dataset_utils import remove_lines
+    from utils.performance import write_performance_score
+    
+    idx = index.split("_")[1]
+    
+    # 处理最优解：计算变化区域并恢复原始区域
+    best_diff = torch.from_numpy(remove_lines(best_plan != ori_plan))
+    best_plan = torch.where(best_diff==1, best_plan, ori_plan)
+    
+    # 保存土地利用方案
+    save_all_plans(ori_plan, best_plan, final_plan, index, 
+                   save_folder=plan_folder,
+                   raw_data_root=raw_data_root)
+    
+    # 写入性能指标
+    scores = write_performance_score(best_plan, ori_plan, final_plan, pred_diff,
+                                    info_dict,
+                                    src_folder=plan_folder,
+                                    tmp_folder=tmp_folder,
+                                    frg_model_path=frg_model_path,
+                                    output_path=perf_path)
+    
+    return scores

@@ -138,7 +138,6 @@ def calculate_iou_01(prediction, target):
     iou_score = torch.sum(intersection.float()) / torch.sum(union.float())
     return iou_score.item()
 
-
 def calculate_miou(pred, target, epsilon=1e-6):
     """
     计算MIOU (Mean Intersection over Union)
@@ -171,6 +170,30 @@ def calculate_miou(pred, target, epsilon=1e-6):
 
     
     return iou_per_sample
+
+
+def calculate_change_area_metrics(new_diff: torch.Tensor, target_diff: torch.Tensor):
+    """
+    使用MetricsMeter计算变化区域的指标
+    
+    Parameters:
+    ----------
+        new_diff: torch.tensor, 新方案的变化区域
+        target_diff: torch.tensor, 目标变化区域
+        
+    Returns:
+    --------
+        metrics_dict: dict, 包含所有指标的计算结果
+    """
+    from utils.training_utils import MetricsMeter
+    
+    meter = MetricsMeter()
+    meter.update(new_diff, target_diff)
+    metrics = meter.get_metrics()
+    
+    # 返回完整的指标字典
+    return metrics
+
 
 ###################################################################
 ###################  performance: ES  ###################
@@ -328,7 +351,8 @@ def write_performance_score(best_plan: torch.Tensor,
                             pred_diff: torch.Tensor, 
                             info_dict: dict,
                             src_folder: str, 
-                            output_folder: str,
+                            tmp_folder: str,
+                            output_path: str,
                             landscape: bool = True,
                             frg_model_path: str = None,):
     """
@@ -342,26 +366,28 @@ def write_performance_score(best_plan: torch.Tensor,
         info_dict: dict, 原始方案的信息字典
         src_folder: str, 原始方案的文件夹
         frg_model_path: str, fragstats模型路径
-        output_folder: str, 输出文件夹
+        tmp_folder: str, 保存运行时输出文件的临时文件夹
+        output_path: str, 最终结果json的输出路径, e.g. 'sample/performance_score.json'
     """
     print("================= 评估方案中，评估项：变化区域IOU、ES、Landscape =================")
-    ensure_folder(output_folder)
+    ensure_folder(tmp_folder)
     performance_score = {'Change_area':{},
                          'ES':{},
                          'Landscape':{},
                          'FINAL':{},
                          }
-    # 1: 和change_area的IOU
+    # 1: 和change_area的指标计算
     new_diff = torch.where(best_plan != ori_plan, torch.tensor(1), torch.tensor(0))
     real_diff = torch.where(tgt_plan != ori_plan, torch.tensor(1), torch.tensor(0))
     real_diff = torch.from_numpy(remove_lines(real_diff))
-    # 生成方案的变化区域和 1.ATTUNET模型预测变化区域 2.真实变化区域 的IOU
-    performance_score['Change_area']['pred_IOU_score']=calculate_iou_01(new_diff, pred_diff)
-    performance_score['Change_area']['real_IOU_score']=calculate_iou_01(new_diff, real_diff)
-    OA, UA, PA = calculate_OA(new_diff, real_diff)
-    performance_score['Change_area']['OA'] = OA
-    performance_score['Change_area']['UA'] = UA
-    performance_score['Change_area']['PA'] = PA
+    
+    # 使用MetricsMeter计算与真实变化区域的指标
+    real_metrics = calculate_change_area_metrics(new_diff, real_diff)
+    performance_score['Change_area']['real_metrics'] = real_metrics
+    
+    # 使用MetricsMeter计算与预测变化区域的指标
+    pred_metrics = calculate_change_area_metrics(new_diff, pred_diff)
+    performance_score['Change_area']['pred_metrics'] = pred_metrics
 
     # 2: es
     es_value_dict = calculate_es_score(ori_plan, best_plan, tgt_plan, info_dict)
@@ -372,10 +398,10 @@ def write_performance_score(best_plan: torch.Tensor,
     if landscape:
         cls_list = ['LPI','LSI','AI','ED']
         land_list = ['LPI','LSI','AI','ED','SHEI','SHDI','CONTAG']
-        create_frg_csv(src_folder, f'{output_folder}\\batch.csv')
-        frg_cmd(frg_model_path, f'{output_folder}\\batch.csv', output_folder)
+        create_frg_csv(src_folder, f'{tmp_folder}\\batch.csv')
+        frg_cmd(frg_model_path, f'{tmp_folder}\\batch.csv', tmp_folder)
         # cls_dict = get_cls_landscape_index(output_folder, cls_list)
-        land_dict = get_land_landscape_index(output_folder, land_list)
+        land_dict = get_land_landscape_index(tmp_folder, land_list)
     # performance_score['Landscape']['class'] = cls_dict
     performance_score['Landscape']['land'] = land_dict
     
@@ -383,10 +409,9 @@ def write_performance_score(best_plan: torch.Tensor,
     performance_score['FINAL']['FOM'] = calculate_FOM(ori_plan, best_plan, tgt_plan)
     performance_score['FINAL']['kappa'] = calculate_kappa(best_plan, tgt_plan)
 
-    output_file = os.path.join(output_folder, "performance_score.json")
-    with open(output_file,'w') as file:
+    with open(output_path,'w') as file:
         json.dump(performance_score, file, indent=4)  
 
 
-    print(f"Done. The performance scores has been saved to {output_folder}.\n")
+    print(f"Done. The performance scores has been saved to {output_path}.\n")
     return performance_score
