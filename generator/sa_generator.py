@@ -91,6 +91,10 @@ def area_wise_change(cur_plan: torch.Tensor, scale: str, scale_minmax_dict: Dict
         # 根据最小面积和最大面积选择矩形的长度和宽度
         max_length = int(torch.sqrt(torch.tensor(max_area)).item())+1
         min_length = int(torch.sqrt(torch.tensor(min_area)).item())
+        
+        # 确保max_length至少比min_length大1（解决torch.randint参数问题）
+        if max_length <= min_length:
+            max_length = min_length + 1
 
         end_x = min(start_x + torch.randint(min_length, max_length, (1,)),  width)
         end_y = min(start_y + torch.randint(min_length, max_length, (1,)), height)
