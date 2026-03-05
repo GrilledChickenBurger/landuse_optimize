@@ -82,15 +82,15 @@ def calculate_landuse_area_statistics(plan1: torch.Tensor, plan1_name: str,
     
     # 获取土地利用类别列表
     if lu_labels is None:
-        # 将lu_type转换为Python原生类型（解决JSON序列化问题）
-        lu_type_native = int(lu_type) if isinstance(lu_type, (np.integer, np.floating)) else lu_type
-        
         lu_labels = list(set(np.unique(plan1_flat)) | set(np.unique(plan2_flat)))
         lu_labels.sort()
     
     area_stats = {}
     
     for lu_type in lu_labels:
+        # 将lu_type转换为Python原生类型（解决JSON序列化问题）
+        lu_type_native = int(lu_type) if isinstance(lu_type, (np.integer, np.floating)) else lu_type
+        
         # 计算每个landuse类型的像素数量
         area1_pixels = np.sum(plan1_flat == lu_type)
         area2_pixels = np.sum(plan2_flat == lu_type)
