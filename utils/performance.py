@@ -82,6 +82,9 @@ def calculate_landuse_area_statistics(plan1: torch.Tensor, plan1_name: str,
     
     # 获取土地利用类别列表
     if lu_labels is None:
+        # 将lu_type转换为Python原生类型（解决JSON序列化问题）
+        lu_type_native = int(lu_type) if isinstance(lu_type, (np.integer, np.floating)) else lu_type
+        
         lu_labels = list(set(np.unique(plan1_flat)) | set(np.unique(plan2_flat)))
         lu_labels.sort()
     
@@ -102,7 +105,7 @@ def calculate_landuse_area_statistics(plan1: torch.Tensor, plan1_name: str,
         # 计算变化比例（相对于plan1的面积）
         change_ratio = area_change_hectares / area1_hectares if area1_hectares > 0 else 0.0
         
-        area_stats[lu_type] = {
+        area_stats[lu_type_native] = {
             plan1_name: area1_hectares,
             plan2_name: area2_hectares,
             'change_hectares': area_change_hectares,
@@ -476,8 +479,7 @@ def write_performance_score(best_plan: torch.Tensor,
 
 
 def only_landscape(src_folder: str, tmp_folder: str, 
-                    frg_model_path: str, 
-                    metric_list: List[str] = None) -> Dict[str, Dict]:
+                    frg_model_path: str) -> Dict[str, Dict]:
     """
     只计算Landscape的指标
 
