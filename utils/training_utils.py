@@ -273,7 +273,7 @@ class MetricsMeter(object):
         metrics = self.current_metrics
         return (
             f"MetricsMeter (samples: {metrics['total_samples']}, pixels: {metrics['total_pixels']:.0f}):\n"
-            f"  Accuracy: {metrics['accuracy']:.4f}, Precision: {metrics['precision']:.4f}\n"
-            f"  Recall: {metrics['recall']:.4f}, F1-Score: {metrics['f1_score']:.4f}\n"
+            f"  Accuracy(OA): {metrics['accuracy(OA)']:.4f}, Precision(UA): {metrics['precision(UA)']:.4f}\n"
+            f"  Recall(PA): {metrics['recall(PA)']:.4f}, F1-Score: {metrics['f1_score']:.4f}\n"
             f"  IoU: {metrics['iou']:.4f}, TP/FP/TN/FN: {metrics['tp']:.0f}/{metrics['fp']:.0f}/{metrics['tn']:.0f}/{metrics['fn']:.0f}"
         )
