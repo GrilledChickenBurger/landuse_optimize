@@ -10,7 +10,7 @@ from sklearn.metrics import confusion_matrix
 
 from calculator.cal_es_score import cal_es_value, get_es_cal_func_dict
 from utils.tools import ensure_folder
-from utils.dataset_utils import remove_lines
+from utils.dataset_utils import remove_lines, convert_to_nparray
 from libs.const import PIXEL_AREA_IN_HECTARES
 
 def calculate_FOM(ori, pred, true):
@@ -77,8 +77,8 @@ def calculate_landuse_area_statistics(plan1: torch.Tensor, plan1_name: str,
         area_stats: 包含各landuse类型面积统计的字典
     """
     # 确保plan是numpy数组并展平
-    plan1_flat = plan1.squeeze(0).numpy().flatten()
-    plan2_flat = plan2.squeeze(0).numpy().flatten()
+    plan1_flat = convert_to_nparray(plan1).squeeze().flatten()
+    plan2_flat = convert_to_nparray(plan2).squeeze().flatten()
     
     # 获取土地利用类别列表
     if lu_labels is None:
