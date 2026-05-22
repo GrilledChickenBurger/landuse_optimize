@@ -13,6 +13,10 @@ logs/
 # 检查点和模型文件
 checkpoints/
 
+# 图片文件
+imgs/
+figures/
+
 # 结果文件
 results/
 
@@ -46,3 +50,7 @@ Thumbs.db
 *.zip
 *.tar.gz
 *.rar
+
+# 本地其他文件
+# 1. 用于补充autodl无法完成的指标计算
+autodl_fix.py

@@ -217,7 +217,8 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor],
                         color_map: Union[Dict[Any, Tuple[float, float, float]], str] = None, 
                         figsize: Tuple[int, int] = None, 
                         layout: Tuple[int, int] = None,
-                        show: bool = False) -> List[str]:
+                        show: bool = False,
+                        show_colorbar: bool = True) -> List[str]:
     """
     通用张量可视化函数，支持自定义颜色映射和图像布局配置。
     
@@ -232,6 +233,7 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor],
         figsize: tuple, 图像大小，格式为 (width, height)，默认根据张量数量自动计算
         layout: tuple, 子图布局，格式为 (rows, cols)，默认自动计算
         show: bool, 是否显示图像，默认值为 False
+        show_colorbar: bool, 是否显示颜色带，默认值为 True
     
     Returns:
     -------
@@ -320,18 +322,21 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor],
                 # 绘制热图
                 im = ax.imshow(mapped_data, cmap=custom_cmap)
                 
-                # 添加颜色条并自定义标签
-                cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-                cbar.set_ticks(range(len(unique_values)))
-                cbar.set_ticklabels([str(int(v)) if isinstance(v, (int, np.integer)) else str(v) for v in unique_values])
+                # 添加颜色条并自定义标签（如果启用）
+                if show_colorbar:
+                    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                    cbar.set_ticks(range(len(unique_values)))
+                    cbar.set_ticklabels([str(int(v)) if isinstance(v, (int, np.integer)) else str(v) for v in unique_values])
             elif isinstance(color_map, str):
                 # 使用默认颜色映射
                 im = ax.imshow(nparr, cmap=color_map)
-                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                if show_colorbar:
+                    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
             else:
                 # 使用默认颜色映射
                 im = ax.imshow(nparr, cmap='viridis')
-                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                if show_colorbar:
+                    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
             
             # 设置标题
             ax.set_title(title)
@@ -446,3 +451,25 @@ def save_tif(plan, output_folder, output_filename):
         transform=transform
     ) as dst:
         dst.write(plan_np[0, 0, :, :], 1)
+
+
+def find_valid_file(file_paths: List[str], file_description: str = "文件") -> Optional[str]:
+    """
+    从文件路径列表中查找第一个存在的有效文件路径
+    
+    Parameters:
+    -----------
+    file_paths: List[str], 文件路径列表，按优先级排序
+    file_description: str, 文件描述，用于日志输出
+    
+    Returns:
+    --------
+    Optional[str]: 第一个存在的文件路径，如果都不存在则返回None
+    """
+    for file_path in file_paths:
+        if os.path.exists(file_path):
+            return file_path
+    
+    # 如果所有路径都不存在，输出警告信息
+    print(f"警告: 找不到{file_description}文件，尝试的路径有: {', '.join(file_paths)}")
+    return None
