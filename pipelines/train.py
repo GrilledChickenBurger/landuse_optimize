@@ -299,6 +299,23 @@ def valid_pipeline(config_path: str, model_checkpoint_path: str,
 
                 dataset_loss.update(loss.item())
                 print(f'Batch [{i_batch}/{len(dataloader)}], Loss: {dataset_loss.val:.4f}({dataset_loss.avg:.4f}) ')
+                
+                # 可视化
+                save_path = os.path.join(os.path.dirname(checkpoint_path), f'{dataset_split}_pic_{data_config.pack}', f"{dataset_split}_{i_batch}.png")
+                visualize_tensor_list(
+                    tensor_dict={
+                        'DEM':data_pack[0][0,0],
+                        'DL':data_pack[0][0,1],
+                        'GDP':data_pack[0][0,2],
+                        'RK':data_pack[0][0,3],
+                        'tgt':data_pack[2],
+                        "outputs": outputs,
+                        "diff": diff,
+                    },
+                    main_title=f"{data_pack[3]}",
+                    save_path=save_path,
+                    color_map='viridis',
+                )
         
         dataset_epoch_loss = dataset_loss.avg
         print(f'\n{dataset_split} Loss: {dataset_epoch_loss:.4f}')

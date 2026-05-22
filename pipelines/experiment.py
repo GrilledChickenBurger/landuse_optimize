@@ -1,4 +1,4 @@
-# step2: 运行随机优化算法(SA|GA)
+# before step2: 探索GA的最佳参数组合
 from argparse import Namespace
 import json
 import os
