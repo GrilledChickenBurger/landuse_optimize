@@ -57,11 +57,6 @@
   - `ExpoAverageMeter`: 指数加权平均计器
 - **使用场景**: 模型训练过程中的辅助功能
 
-### `param_utils.py`
-- **功能**: 参数统计工具
-- **核心类**: `RunningStats` - 运行统计类
-- **使用场景**: 数据分布参数计算，用于标准化处理
-
 ### `train_maxent.py`
 - **功能**: MaxEnt模型训练工具
 - **核心函数**: `train_pipeline()` - MaxEnt训练流程

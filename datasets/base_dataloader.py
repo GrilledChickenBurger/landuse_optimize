@@ -1,3 +1,4 @@
+import os
 from typing import Dict, List, Tuple, Union, Any
 from torch.utils import data
 from torch.utils.data import DataLoader
@@ -9,6 +10,7 @@ from torchvision import datasets, transforms
 from .training_dataloader import load_training_data
 from .optimize_dataloader import load_optimize_data
 from libs.const import ALL_FACTORS
+from utils.dataset_utils import get_year_data
 
 def get_dataset(type:str, data_config:Dict[str, Any]) -> data.Dataset:
     """
@@ -54,6 +56,13 @@ def get_dataset(type:str, data_config:Dict[str, Any]) -> data.Dataset:
             pack=data_config_dict.get("pack", [-1, -1]),
             transform=transform if data_config_dict.get("transform", True) else None,
             normalize=data_config_dict.get("normalize", False),
+        )
+    elif type == "statistic":
+        return StatisticDataset(
+            root=data_config_dict["root"],
+            shape=data_config_dict["shape"],
+            year=data_config_dict["year"],
+            factor_list=data_config_dict["factor_list"],
         )
     else:
         raise ValueError(f"未知数据集类型: {type}")
@@ -196,3 +205,41 @@ class OptimizeDataset(BaseDataset):
             use_parallel=use_parallel,
             max_workers=max_workers,
         )
+
+
+class StatisticDataset(BaseDataset):
+    """
+    统计数据集类 — 仅加载驱动因子和源年 LU，用于计算驱动因子分布参数。
+
+    与 OptimizeDataset 相比，跳过 ES 数据和目标年 LU 的磁盘读取，约节省 30% I/O。
+
+    Parameters:
+    ----------
+    root: str
+        数据集根目录
+    shape: list
+        数据形状，如 [1, 128, 128]
+    year: str
+        年份，如 '10', '15', '20'
+    factor_list: list
+        驱动因子列表
+    """
+    def __init__(self, root: str, shape: List, year: str, factor_list: List):
+        super().__init__(root, shape, factor_list)
+
+        assert set(factor_list).issubset(ALL_FACTORS), \
+            "factor_list 包含无效的驱动因子"
+
+        root_ori = os.path.join(root, f"valid_{year}")
+        # 只读因子 + LU，跳过 RA / ES / tgt-year LU
+        cond_list = factor_list + ["LU"]
+        xf_ori = get_year_data(root_ori, cond_list, shape, max_workers=1, use_parallel=False)
+
+        factor_num = len(factor_list)
+        self.xf_pack_list = [
+            {
+                "factors": xf_ori[idx, :factor_num],   # (F, H, W)
+                "src_lu": xf_ori[idx, factor_num:],    # (1, H, W)
+            }
+            for idx in range(xf_ori.shape[0])
+        ]

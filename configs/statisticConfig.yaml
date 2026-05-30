@@ -1,11 +1,8 @@
 # 数据分布参数统计配置文件
-
-  root: "_data\\optimize_data"
-  shape: [1, 128, 128]  # [通道数, 高度, 宽度]
-  factor_list: ["DEM", "DL", "GDP", "RK"]  # 驱动因子列表
-  es_list: ["PODU"]
-  year: "20"  # 基准年份
-  lu_labels: [0, 11, 12, 21, 22, 23, 24, 31, 32, 33, 41, 42, 43, 45, 46, 51, 52, 53, 65, 66]
-  shuffle: false  # 是否打乱数据
-  batch_size: 8  # 批次大小
-  result_path: "_data\\statistic_{year}.json"  # 统计参数路径
+root: "_data\\optimize_data"
+shape: [1, 128, 128] # [通道数, 高度, 宽度]
+factor_list: ["DEM", "DL", "GDP", "RK"] # 驱动因子列表
+year: "20" # 基准年份
+shuffle: false # 是否打乱数据
+batch_size: 8 # 批次大小
+result_path: "_data\\param_{year}.json" # 统计参数输出路径

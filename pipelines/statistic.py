@@ -1,99 +1,112 @@
-# step0: 开始训练之前，获取各项驱动因子的数据分布参数
-# 这些参数将用于训练时的标准化/归一化处理
-# 参数
-from typing import Dict, Any, List
+# step0: 训练前的驱动因子分布参数统计
+# 输出 JSON 文件供后续训练/优化阶段的归一化使用
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import json
+from typing import Dict, Any
+
 import tqdm
 import torch
 from torch.utils.data import DataLoader
 
 from datasets.base_dataloader import get_dataset
-from utils.param_utils import RunningStats
+from libs.const import ALL_LOG_FACTORS
 from utils.tools import get_yaml
+
+
+class RunningStats:
+    """驱动因子均值/方差的批量 Welford 累加器。
+
+    `update` 接收任意形状张量（可带 mask），按批合并到运行统计量中；合并公式为
+    精确等价于逐像素累加的 Chan/Welford 并行版本。
+    """
+    def __init__(self):
+        self.n = 0
+        self.mean = 0.0
+        self.M2 = 0.0
+
+    def update(self, x: torch.Tensor, mask: torch.Tensor = None):
+        if mask is not None:
+            x = x[mask]
+        if x.numel() == 0:
+            return
+        x = x.reshape(-1).float()
+        n_new = x.numel()
+        new_mean = x.mean().item()
+        new_var = x.var(unbiased=False).item() if n_new > 1 else 0.0
+
+        delta = new_mean - self.mean
+        total_n = self.n + n_new
+        self.mean = (self.n * self.mean + n_new * new_mean) / total_n
+        self.M2 += new_var * n_new + delta * delta * self.n * n_new / total_n
+        self.n = total_n
+
+    def finalize(self):
+        if self.n <= 1:
+            return self.mean, 0.0
+        var = self.M2 / (self.n - 1)
+        return self.mean, var ** 0.5
+
 
 def get_params(config_path: str) -> Dict[str, Any]:
     """
-    获取数据分布参数
+    计算各驱动因子的均值/方差并保存到 JSON，供后续训练/优化阶段的归一化使用。
+
+    统计时会跳过 nodata 像素（src_lu == 0），并对 ALL_LOG_FACTORS 中的因子取 log1p。
+
+    Parameters:
+    ----------
+    config_path : str
+        statisticConfig.yaml 的路径，需包含以下键：
+        - root: 数据根目录
+        - shape: 张量形状 [C, H, W]
+        - factor_list: 需统计的驱动因子列表
+        - year: 基准年份
+        - batch_size: 批次大小
+        - shuffle: 是否打乱数据
+        - result_path: 输出路径模板，支持 "{year}" 占位符
+
+    Returns:
+    --------
+    params : Dict[str, Any]
+        每个因子的统计参数字典，格式为:
+        {factor_name: {"n": 有效像素数, "miu": 均值, "epsilon": 标准差 + 1e-6}}
+        同时写入 result_path 指定的 JSON 文件。
     """
-    # 1. 加载数据
     config = get_yaml(config_path)
-    dataset = get_dataset(
-        type="optimize",
-        data_config=config
-    )
-    dataloader = DataLoader(
-        dataset,
-        batch_size=config.batch_size,
-        shuffle=config.shuffle,
-    )
+    dataset = get_dataset(type="statistic", data_config=config)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=config.shuffle)
 
-    # 初始化统计器
-    stats = {
-        name: RunningStats()
-        for name in config.factor_list
-    }
+    stats = {name: RunningStats() for name in config.factor_list}
 
-    # 使用tqdm显示进度条
-    progress_bar = tqdm.tqdm(
-        dataloader, 
-        desc="Processing batches",
-        total=len(dataloader),
-        unit="batch",
-        ncols=100,
-        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]'
-    )
-    
-    for i_batch, data_pack in enumerate(progress_bar):
-        # 驱动因子 (batch_size, factor_num, 128, 128)
-        factors = torch.tensor(data_pack[0], dtype=torch.float32)
-        factor_dict = get_data_dict(factors, config.factor_list)
-        # src LU (batch_size, 1, 128, 128)
-        src_lu = torch.tensor(data_pack[3], dtype=torch.int64)
-        # 过滤nodata区域，元素=True表示有效像素，False表示nodata像素
-        nodata_mask = (src_lu != 0).squeeze(1)  # shape=(batch_size, 128, 128)
-        # 对每个驱动因子进行统计
-        for name, x in factor_dict.items():
-            if name in ["GDP", "RK", "DL"]:   # 示例
+    for data in tqdm.tqdm(dataloader, desc="Computing factor statistics"):
+        factors = data["factors"].float()                       # (B, F, H, W)
+        nodata_mask = (data["src_lu"].long() != 0).squeeze(1)   # (B, H, W), True=有效
+
+        for i, name in enumerate(config.factor_list):
+            x = factors[:, i]                                   # (B, H, W)
+            if name in ALL_LOG_FACTORS:
                 x = torch.log1p(x)
             stats[name].update(x, mask=nodata_mask)
-        
-    # 汇总结果
+
     params = {}
     for name, rs in stats.items():
         miu, std = rs.finalize()
         params[name] = {
             "n": rs.n,
             "miu": float(miu),
-            "epsilon": float(std + 1e-6)
+            "epsilon": float(std + 1e-6),
         }
     print(params)
-    
-    # 保存参数
+
     result_path = config.result_path.format(year=config.year)
     with open(result_path, "w") as f:
         json.dump(params, f, indent=4)
-    
-    return params
-    
-def get_data_dict(data_pack: torch.Tensor, factor_list: List[str], prev_data_dict: Dict[str, torch.Tensor]=None) -> Dict[str, torch.Tensor]:
-    """
-    从数据打包中提取并返回必要的张量字典
-    
-    Parameters:
-    ----------
-    data_pack: torch.Tensor, shape=(batch_size, factor_num, H, W)
-    factor_list: List[str], 和data_pack中的驱动因子顺序对应
-    prev_data_dict: Optional[Dict[str, torch.Tensor]] = None, 
-        若不为None则把新的键值对添加到prev_data_dict中, 若为None则直接返回新的data_dict
-    
-    Returns:
-    --------
-    data_dict: Dict[str, torch.Tensor], 键名对应factor_list中的元素，保持4维结构(1, 1, H, W)
-    """
-    data_dict = {} if prev_data_dict is None else prev_data_dict.copy()
-    for i, factor in enumerate(factor_list):
-        # 提取对应因子的数据，并保持4维结构
-        d = data_pack[:, i]  # shape=(batch_size, 1, H, W)
-        data_dict[factor] = d
-    return data_dict
 
+    return params
+
+
+if __name__ == "__main__":
+    get_params("configs/statisticConfig.yaml")
