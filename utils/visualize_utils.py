@@ -502,7 +502,14 @@ def grouped_box_plot_figure(
         save_path: str = None,
         dpi: int = 200,
         fontsize: int = 11,
+        title_fontsize: int = None,
+        ylabel_fontsize: int = None,
+        tick_fontsize: int = None,
+        legend_fontsize: int = None,
+        suptitle_fontsize: int = None,
         legend_loc: str = "subplot",
+        legend_use_zh_font: bool = True,
+        zh_font=None,
 ) -> plt.Figure:
     """
     legend_loc: "subplot" = 第一个子图右上角, "bottom" = 图底部居中, None = 不显示图例
@@ -576,6 +583,13 @@ def grouped_box_plot_figure(
     else:
         axes = axes.flatten()
 
+    # 计算各元素实际字号（优先使用指定值，否则由 fontsize 派生）
+    _title_fs = title_fontsize if title_fontsize is not None else fontsize + 3
+    _ylabel_fs = ylabel_fontsize if ylabel_fontsize is not None else fontsize
+    _tick_fs = tick_fontsize if tick_fontsize is not None else fontsize
+    _legend_fs = legend_fontsize if legend_fontsize is not None else fontsize
+    _suptitle_fs = suptitle_fontsize if suptitle_fontsize is not None else fontsize + 5
+
     for i, (subplot_title, subplot_data) in enumerate(data.items()):
         ax = axes[i]
         positions_all = []
@@ -607,10 +621,11 @@ def grouped_box_plot_figure(
         # x 轴
         group_centers = [j * 2 for j in range(n_groups)]
         ax.set_xticks(group_centers)
-        ax.set_xticklabels(group_labels, fontsize=fontsize)
+        ax.set_xticklabels(group_labels, fontproperties=zh_font, fontsize=_tick_fs)
 
-        ax.set_title(subplot_title, fontsize=fontsize + 3, fontweight='bold')
-        ax.set_ylabel(y_label, fontsize=fontsize)
+        ax.set_title(subplot_title, fontproperties=zh_font, fontsize=_title_fs, fontweight='bold')
+        ax.set_ylabel(y_label, fontproperties=zh_font, fontsize=_ylabel_fs)
+        ax.tick_params(axis='y', labelsize=_tick_fs)
         ax.grid(True, alpha=0.3, axis='y')
 
         if global_ylim is not None:
@@ -620,19 +635,26 @@ def grouped_box_plot_figure(
     if legend_loc is not None and n_series > 1:
         handles = [plt.Rectangle((0, 0), 1, 1, fc=series_colors.get(s, "lightgray"), alpha=0.75)
                    for s in series_names]
+        _legend_zh = zh_font if legend_use_zh_font else None
         if legend_loc == "subplot":
-            axes[0].legend(handles, series_names, loc='upper right', fontsize=fontsize - 1)
+            _legend_prop = _legend_zh.copy() if _legend_zh is not None else None
+            if _legend_prop is not None:
+                _legend_prop.set_size(_legend_fs - 1)
+            axes[0].legend(handles, series_names, loc='upper right', prop=_legend_prop, fontsize=_legend_fs - 1)
         elif legend_loc == "bottom":
+            _legend_prop = _legend_zh.copy() if _legend_zh is not None else None
+            if _legend_prop is not None:
+                _legend_prop.set_size(_legend_fs)
             fig.legend(handles, series_names, ncol=len(series_names), loc='lower center',
-                       bbox_to_anchor=(0.5, -0.04), frameon=False, fontsize=fontsize,
-                       handlelength=1.2, handleheight=1.2)
+                       bbox_to_anchor=(0.5, -0.04), frameon=False,
+                       handlelength=1.2, handleheight=1.2, prop=_legend_prop, fontsize=_legend_fs)
 
     # 隐藏多余子图
     for j in range(n_subplots, len(axes)):
         axes[j].set_visible(False)
 
     if title:
-        fig.suptitle(title, fontsize=fontsize + 5, fontweight='bold', y=1.01)
+        fig.suptitle(title, fontsize=_suptitle_fs, fontweight='bold', y=1.01)
     plt.tight_layout()
     plt.subplots_adjust(hspace=hspace, wspace=wspace)
 
@@ -658,9 +680,15 @@ def grouped_bar_figure(
         show_bar_labels: bool = False,
         bar_label_fmt: str = "{:.2f}",
         fontsize: int = 12,
+        title_fontsize: int = None,
+        ylabel_fontsize: int = None,
+        tick_fontsize: int = None,
+        bar_label_fontsize: int = None,
+        legend_fontsize: int = None,
         ylim_padding: float = 0.15,
         ytick_fmt: str = None,
         show_xticklabels: bool = True,
+        zh_font=None,
 ) -> plt.Figure:
     """
     ...
@@ -706,6 +734,13 @@ def grouped_bar_figure(
         fig = ax.figure
         is_subplot = True
 
+    # 计算各元素实际字号（优先使用指定值，否则由 fontsize 派生）
+    _title_fs = title_fontsize if title_fontsize is not None else fontsize + 4
+    _ylabel_fs = ylabel_fontsize if ylabel_fontsize is not None else fontsize + 2
+    _tick_fs = tick_fontsize if tick_fontsize is not None else fontsize
+    _bar_label_fs = bar_label_fontsize if bar_label_fontsize is not None else fontsize - 3
+    _legend_fs = legend_fontsize if legend_fontsize is not None else fontsize
+
     # 计算每个组内系列的位置偏移
     offsets = np.linspace(-bar_width / 2 + bar_width / (2 * n_series),
                           bar_width / 2 - bar_width / (2 * n_series),
@@ -735,12 +770,12 @@ def grouped_bar_figure(
                 ax.annotate(bar_label_fmt.format(val),
                             xy=(rect.get_x() + rect.get_width() / 2, h),
                             xytext=(0, offset), textcoords='offset points',
-                            ha='center', va=va, fontsize=fontsize - 3)
+                            ha='center', va=va, fontsize=_bar_label_fs)
 
     # x 轴
     ax.set_xticks(range(n_groups))
     if show_xticklabels:
-        ax.set_xticklabels(group_labels, fontsize=fontsize + 2)
+        ax.set_xticklabels(group_labels, fontproperties=zh_font, fontsize=_tick_fs)
     else:
         ax.set_xticklabels([])
     ax.set_xlim(-0.5, n_groups - 0.5)
@@ -753,11 +788,11 @@ def grouped_bar_figure(
                    linewidth=hl.get("linewidth", 0.8),
                    linestyle=hl.get("linestyle", "-"))
 
-    ax.set_ylabel(y_label, fontsize=fontsize + 2)
+    ax.set_ylabel(y_label, fontproperties=zh_font, fontsize=_ylabel_fs)
     if title:
-        ax.set_title(title, fontsize=fontsize + 4, fontweight='bold')
+        ax.set_title(title, fontproperties=zh_font, fontsize=_title_fs, fontweight='bold')
     ax.grid(True, alpha=0.3, axis='y')
-    ax.tick_params(axis='both', labelsize=fontsize)
+    ax.tick_params(axis='both', labelsize=_tick_fs)
     if ytick_fmt is not None:
         from matplotlib.ticker import FuncFormatter
         ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: ytick_fmt.format(x)))
@@ -778,8 +813,11 @@ def grouped_bar_figure(
     if show_legend and n_series > 1:
         handles = [plt.Rectangle((0, 0), 1, 1, fc=series_colors.get(s, "lightgray"), alpha=0.85)
                    for s in series_names]
+        _legend_prop = zh_font.copy() if zh_font is not None else None
+        if _legend_prop is not None:
+            _legend_prop.set_size(_legend_fs)
         ax.legend(handles, series_names, loc='upper left', bbox_to_anchor=(1.01, 1),
-                  fontsize=fontsize, frameon=True)
+                  prop=_legend_prop, fontsize=_legend_fs, frameon=True)
 
     if not is_subplot:
         plt.tight_layout()

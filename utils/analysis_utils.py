@@ -486,6 +486,91 @@ def cal_sample_es_change_ratio(metrics: dict,
 
 
 
+
+def cal_scenario_diff_ratio(sa_total_area: dict, ga_total_area: dict,
+                            lu_order: list = None,
+                            scenario_order: list = None,
+                            scenario_display_names: dict = None,
+                            y_scale: str = "pct",
+                            signed_mode: bool = True,
+                            gap_threshold: float = 50):
+    """
+    计算 SA vs GA 各情景下 LU 类型面积变化差异比例。
+
+    计算公式:
+      - ratio 模式: Y = (S - O) / |O - T|  (归一化比值)
+      - pct 模式:   Y = (S - O) / total_area * 100  (百分点)
+
+    Returns:
+        data: {地类名: {显示名: Y值}}
+        lu_directions: {地类名: "increase"|"decrease"}
+        lu_ref_lines: {地类名: ref_val}
+    """
+    from libs.const import ALL_LU_LABELS_DICT
+
+    if lu_order is None:
+        lu_order = ["1", "2", "3", "4", "5", "6"]
+    if scenario_order is None:
+        scenario_order = [
+            "SA_default", "SA_enterprise", "SA_farmer", "SA_tourist",
+            "GA_default", "GA_enterprise", "GA_farmer", "GA_tourist",
+        ]
+    if scenario_display_names is None:
+        scenario_display_names = {
+            "SA_default": "SA_基准", "SA_enterprise": "SA_企业",
+            "SA_farmer": "SA_农民", "SA_tourist": "SA_游客",
+            "GA_default": "GA_基准", "GA_enterprise": "GA_企业",
+            "GA_farmer": "GA_农民", "GA_tourist": "GA_游客",
+        }
+
+    origin = sa_total_area["origin"]
+    target = sa_total_area["target"]
+    total_area = sum(origin.values())
+
+    valid_lu = []
+    for lu_code in lu_order:
+        gap = abs(origin[lu_code] - target[lu_code])
+        if gap >= gap_threshold:
+            valid_lu.append((lu_code, origin[lu_code], target[lu_code], gap))
+
+    data = {}
+    lu_directions = {}
+    lu_ref_lines = {}
+    for lu_code, ori_val, tgt_val, gap in valid_lu:
+        lu_name = ALL_LU_LABELS_DICT.get(int(lu_code), lu_code)
+        lu_directions[lu_name] = "increase" if tgt_val > ori_val else "decrease"
+        data[lu_name] = {}
+
+        if y_scale == "ratio":
+            ref_val = 1.0
+        else:
+            ref_val = round(abs(tgt_val - ori_val) / total_area * 100, 2)
+        lu_ref_lines[lu_name] = ref_val
+
+        for s_key in scenario_order:
+            if s_key.startswith("SA_"):
+                scenario_val = sa_total_area[s_key[3:]][lu_code]
+            else:
+                scenario_val = ga_total_area[s_key[3:]][lu_code]
+
+            if y_scale == "ratio":
+                if signed_mode:
+                    y_val = round((scenario_val - ori_val) / gap, 4)
+                else:
+                    y_val = round(abs(scenario_val - ori_val) / gap, 4)
+            else:
+                if signed_mode:
+                    y_val = round((scenario_val - ori_val) / total_area * 100, 2)
+                else:
+                    y_val = round(abs(scenario_val - ori_val) / total_area * 100, 2)
+
+            display_name = scenario_display_names.get(s_key, s_key)
+            data[lu_name][display_name] = y_val
+
+        base_val = -ref_val if (signed_mode and lu_directions[lu_name] == "decrease") else ref_val
+        data[lu_name]["真实"] = base_val
+
+    return data, lu_directions, lu_ref_lines
 def visualize_by_type_bars(total_data_dict: Dict[str, Dict[Union[int, str], float]],
                          total_title: str = "总面积变化",
                          save_folder: str = None,
@@ -582,14 +667,7 @@ def visualize_by_type_bars(total_data_dict: Dict[str, Dict[Union[int, str], floa
         elif is_scenario_data:
             # 场景类型标签和颜色映射
             t_name = t  # 直接使用场景名称作为标签
-            # 为场景类型分配固定颜色
-            scenario_colors = {
-                "default": (175/255,199/255,191/255),    # 蓝色
-                "enterprise": (196/255,218/255,230/255), # 橙色
-                "farmer": (153/255,195/255,217/255),     # 绿色
-                "tourist": (159/255,188/255,194/255)    # 紫色
-            }
-            t_color = scenario_colors.get(t, (0.5, 0.5, 0.5))
+            t_color = SCENARIO_COLOR_MAP.get(t, (0.5, 0.5, 0.5))
         else:
             # LU类型标签和颜色映射
             if t in SIMPLIFIED_COLOR_MAP:
@@ -863,14 +941,7 @@ def visualize_by_hist(sample_area_ratio_data_dict: Dict[str, Dict[int, List[floa
             elif is_scenario_data:
                 # 场景类型标签和颜色映射
                 t_name = t  # 直接使用场景名称作为标签
-                # 为场景类型分配固定颜色
-                scenario_colors = {
-                "default": (175/255,199/255,191/255),    # 蓝色
-                "enterprise": (196/255,218/255,230/255), # 橙色
-                "farmer": (153/255,195/255,217/255),     # 绿色
-                "tourist": (159/255,188/255,194/255)    # 紫色
-                }
-                t_color = scenario_colors.get(t, (0.5, 0.5, 0.5))
+                t_color = SCENARIO_COLOR_MAP.get(t, (0.5, 0.5, 0.5))
             else:
                 # LU类型标签和颜色映射
                 if t in ALL_LU_LABELS_DICT:
@@ -1066,14 +1137,7 @@ def visualize_by_box(sample_area_ratio_data_dict: Dict[str, Dict[int, List[float
         elif is_scenario_data:
             # 场景类型标签和颜色映射
             t_name = t  # 直接使用场景名称作为标签
-            # 为场景类型分配固定颜色
-            scenario_colors = {
-                "default": (175/255,199/255,191/255),    # 蓝色
-                "enterprise": (196/255,218/255,230/255), # 橙色
-                "farmer": (153/255,195/255,217/255),     # 绿色
-                "tourist": (159/255,188/255,194/255)    # 紫色
-            }
-            t_color = scenario_colors.get(t, (0.5, 0.5, 0.5))
+            t_color = SCENARIO_COLOR_MAP.get(t, (0.5, 0.5, 0.5))
         else:
             # LU类型标签和颜色映射
             if t in ALL_LU_LABELS_DICT:
@@ -1251,15 +1315,15 @@ def convert_json_keys_to_int(data: Dict) -> Dict:
 def load_json_with_int_keys(json_path: str) -> Dict:
     """
     从JSON文件加载数据并自动将字符串键转换为整数键
-    
+
     Parameters:
     -----------
     - json_path: JSON文件路径
-    
+
     Returns:
     -----------
     - data: 转换后的数据字典，其中数字键被转换为整数
-    
+
     Raises:
     -----------
     - FileNotFoundError: 如果JSON文件不存在
@@ -1267,12 +1331,67 @@ def load_json_with_int_keys(json_path: str) -> Dict:
     """
     if not os.path.exists(json_path):
         raise FileNotFoundError(f"JSON文件 {json_path} 不存在")
-    
+
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
-    
+
     return convert_json_keys_to_int(data)
 
+
+def load_or_compute_metric(data_folder: str,
+                           cache_name: str,
+                           calc_fn,
+                           json_path: str = None,
+                           **calc_kwargs):
+    cache_path = json_path or os.path.join(data_folder, cache_name)
+    if os.path.exists(cache_path):
+        return load_json_with_int_keys(cache_path)
+
+    if data_folder is None:
+        raise ValueError("data_folder must be provided if cache json does not exist")
+
+    print(f"JSON文件路径 {cache_path} 不存在, 通过get_performance_metrics计算")
+    metrics = get_performance_metrics(data_folder)
+    data = calc_fn(metrics, **calc_kwargs)
+    ensure_folder(os.path.dirname(cache_path))
+    with open(cache_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+    return data
+
+
+def list_sample_indices(data_folder: str) -> List[str]:
+    if not os.path.exists(data_folder):
+        raise ValueError(f"数据文件夹不存在: {data_folder}")
+
+    indices = set()
+    for strategy_dir in os.listdir(data_folder):
+        strategy_path = os.path.join(data_folder, strategy_dir)
+        if not os.path.isdir(strategy_path):
+            continue
+        for item in os.listdir(strategy_path):
+            item_path = os.path.join(strategy_path, item)
+            if os.path.isdir(item_path) and '_' in item and item.replace('_', '').isdigit():
+                indices.add(item.split("_")[1])
+    return sorted(indices, key=lambda x: int(x) if str(x).isdigit() else str(x))
+
+
+def build_sa_ga_total_area_data(sa_folder: str, ga_folder: str):
+    sa_data = load_or_compute_metric(
+        sa_folder, "total_area.json", cal_total_area,
+        aggregate_by_first_digit=True)
+    ga_data = load_or_compute_metric(
+        ga_folder, "total_area.json", cal_total_area,
+        aggregate_by_first_digit=True)
+    return sa_data, ga_data
+
+
+def build_sa_ga_combined_area_data(sa_folder: str, ga_folder: str) -> Dict:
+    sa_data, ga_data = build_sa_ga_total_area_data(sa_folder, ga_folder)
+    combined = {"origin": sa_data["origin"], "target": sa_data["target"]}
+    for scenario in ALL_SCENARIOS:
+        combined[f"SA_{scenario}"] = sa_data[scenario]
+        combined[f"GA_{scenario}"] = ga_data[scenario]
+    return combined
 
 
 def get_best_samples(metrics, min_improvement_threshold=0.0, min_positive_scenarios=4, min_other_threshold=None):

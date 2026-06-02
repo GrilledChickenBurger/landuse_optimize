@@ -51,6 +51,13 @@ ALL_ES_TYPES_DICT = {
     "water": "水源涵养",
     "culture": "文化服务",
 }
+ALL_SCENARIOS = ["default", "enterprise", "farmer", "tourist"]
+ALL_SCENARIOS_DICT = {
+    "default": "base",
+    "enterprise": "enterprise",
+    "farmer": "farmer",
+    "tourist": "tourist",
+}
 # 水源涵养计算：不同生态系统的地表径流系数 (按 LU 二级类精确赋值)
 # 数值单位为小数 (原始表为百分比, 除以 100 转换)
 # 未在原表列出的二级类按其一级类兜底:
@@ -178,6 +185,14 @@ ES_COLOR_MAP={
     "water": (34/255,121/255,176/255),
     "culture": (254/255,192/255,193/255),
 }
+
+SCENARIO_COLOR_MAP = {
+    "default": (175/255,199/255,191/255),
+    "enterprise": (196/255,218/255,230/255),
+    "farmer": (153/255,195/255,217/255),
+    "tourist": (159/255,188/255,194/255),
+}
+SA_GA_COLOR_MAP = {"SA": "#5B9BD5", "GA": "#ED7D31"}
 
 FACTOR_10_PARAMS_DICT={
     "DEM": {
