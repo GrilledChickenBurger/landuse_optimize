@@ -57,8 +57,8 @@ def initial_new_population(
         for _ in range(num):
             # 使用repeat函数进行多次area_wise_change
             new_plan = repeat(
-                area_wise_change, 
-                repeat_num=2,  # 重复3次area_wise_change
+                area_wise_change,
+                repeat_num=2,  # 对ori_plan连续应用2次area_wise_change，生成初始个体
                 replace_element=ori_plan,
                 scale=scale_type, 
                 scale_minmax_dict=scale_minmax_dict, 
@@ -75,6 +75,7 @@ def initial_new_population(
 def crossover(parent1:torch.Tensor, parent2:torch.Tensor,
               gen_ratio:float,
               hard_restrict:torch.Tensor,
+              cls_restrict:torch.Tensor = None,
               max_ratio=0.8,
               min_ratio=0.2):
     """
@@ -86,11 +87,13 @@ def crossover(parent1:torch.Tensor, parent2:torch.Tensor,
         parent1: tensor, [1,1,128,128], 第一个父代方案
         parent2: tensor, [1,1,128,128], 第二个父代方案
         gen_ratio: float, 遗传代数, 范围[0,1], 越大表示crossover区域越小
-        hard_restrict: tensor, [1,128,128], 0-1张量, 1表示可以修改的区域
+        hard_restrict: tensor, [1,1,128,128], 0-1张量, 1表示可以修改的区域
             用于限制crossover区域，只能在可修改区域内进行交叉
-        max_ratio: float, optional, 最大交叉比例, default=0.5
-        min_ratio: float, optional, 最小交叉比例, default=0.05
-    
+        cls_restrict: tensor, [1,1,128,128], 0-1张量, optional, 类别约束
+            1表示该像素是51/53类型，只能改为5类（建设用地）；为None时不检查
+        max_ratio: float, optional, 最大交叉比例, default=0.8
+        min_ratio: float, optional, 最小交叉比例, default=0.2
+
     Returns:
     --------
         children: List[tensor], 两个子代方案, 每个元素为[1,1,128,128]
@@ -131,12 +134,26 @@ def crossover(parent1:torch.Tensor, parent2:torch.Tensor,
         top = random.randint(0, H - rect_h)
         left = random.randint(0, W - rect_w)
 
-    temp = child1[:, :, top:top+rect_h, left:left+rect_w].clone()
+    # 保存父本1在矩形区域的值，用于后续交换
+    p1_rect = child1[:, :, top:top+rect_h, left:left+rect_w].clone()
+    p2_rect = child2[:, :, top:top+rect_h, left:left+rect_w]
 
-    child1[:, :, top:top+rect_h, left:left+rect_w] = \
-        child2[:, :, top:top+rect_h, left:left+rect_w]
+    if cls_restrict is not None:
+        # cls_restrict: 1表示该像素为51/53类型，只能改为5类（建设用地）
+        cls_rect = cls_restrict[:, :, top:top+rect_h, left:left+rect_w]  # [1,1,h,w]
+        valid_5 = torch.tensor([51, 52, 53], device=cls_rect.device)
 
-    child2[:, :, top:top+rect_h, left:left+rect_w] = temp
+        # child1 接收 parent2 的值，但保护 cls_restrict==1 且 incoming 值不在 [51,52,53] 的像素
+        protect1 = (cls_rect == 1) & ~torch.isin(p2_rect, valid_5)
+        child1[:, :, top:top+rect_h, left:left+rect_w] = torch.where(protect1, p1_rect, p2_rect)
+
+        # child2 接收 parent1 的值，同理
+        protect2 = (cls_rect == 1) & ~torch.isin(p1_rect, valid_5)
+        child2[:, :, top:top+rect_h, left:left+rect_w] = torch.where(protect2, p2_rect, p1_rect)
+    else:
+        # 无 cls_restrict 时，直接交换整个矩形区域
+        child1[:, :, top:top+rect_h, left:left+rect_w] = p2_rect
+        child2[:, :, top:top+rect_h, left:left+rect_w] = p1_rect
 
     return child1, child2
 
@@ -168,8 +185,8 @@ def mutate(individual:torch.Tensor, **kwargs):
     """
 
     mutated_individual = repeat(
-        generate_new_plan, 
-        repeat_num=2,  # 重复5次generate_new_plan
+        generate_new_plan,
+        repeat_num=2,  # 对个体连续应用2次generate_new_plan扰动
         replace_element=individual,
         **kwargs
     )

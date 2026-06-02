@@ -1,11 +1,14 @@
 import os
 import json
+import time
+import functools
 from argparse import Namespace
 from typing import Dict, Any, List, Optional, Union, Tuple
 import copy
 import torch
 import numpy as np
 from libs.const import *
+import libs.const as _libs_const
 from generator.sa_generator import generate_new_plan
 from calculator.tgt_function_cal import cal_tgt_function
 from utils.performance import write_performance_score
@@ -20,8 +23,8 @@ class SimulatedAnnealing:
     模拟退火优化器类
     用于土地利用规划优化
     """
-    def __init__(     
-            self,       
+    def __init__(
+            self,
             config: Namespace,
             common_config: Namespace,
             model_config: Namespace,
@@ -31,6 +34,11 @@ class SimulatedAnnealing:
             save_path: str,
             weight_dict: Optional[Dict[str, float]] = None,
             use_landscape: bool = False,
+            *,
+            guided: bool = True,
+            disable_early_stop: bool = False,
+            score_cfg: Optional[Namespace] = None,
+            random_restrict_mask: Optional[torch.Tensor] = None,
             ):
         """
         
@@ -69,15 +77,25 @@ class SimulatedAnnealing:
         self.index = index
         self.es_weight_dict = weight_dict
         self.use_landscape = use_landscape
-        
+
+        # ablation 开关
+        self.guided = guided
+        self.disable_early_stop = disable_early_stop
+        self.score_cfg = score_cfg if score_cfg is not None else tUtils.get_default_score_cfg()
+        self.random_restrict_mask = random_restrict_mask
+
         # 模拟退火参数
         self.t_0 = config.T_start
         self.t_end = config.T_end
         self.cooling_rate = config.cooling_rate
-        
+
         # 流程提前结束条件
-        self.max_noimprove_iter = config.max_noimprove_iter  # 最大无改进迭代次数
-        self.max_beststuck_iter = config.max_beststuck_iter  # 最优解停滞阈值
+        if self.disable_early_stop:
+            self.max_noimprove_iter = float('inf')
+            self.max_beststuck_iter = float('inf')
+        else:
+            self.max_noimprove_iter = config.max_noimprove_iter  # 最大无改进迭代次数
+            self.max_beststuck_iter = config.max_beststuck_iter  # 最优解停滞阈值
  
         # 先验信息
         self.year = index.split('_')[0]
@@ -89,7 +107,8 @@ class SimulatedAnnealing:
         self.pred_diff = rUtils.get_pred_diff(ANN_model, self.ori_plan, self.factors, self.device,
                                                 year=self.year,
                                                 condition_list= ["DEM", "DL", "GDP", "RK"] ,
-                                                normalize=True)
+                                                normalize=True,
+                                                sigmoid_threshold=self.score_cfg.runner_utils.sigmoid_threshold)
         self.frg_model_path = common_config.frg_model_path  # fragstats模型路径
 
         # LU方案相关信息
@@ -97,20 +116,34 @@ class SimulatedAnnealing:
 
         # 生成新方案相关限制信息
         redline_restrict = data_dict['restrict']
-        pred_grid_restrict = rUtils.get_grid_restrict_area(self.pred_diff)
         lu_zero_restrict = (self.ori_plan != 0)  # LU=0的地方不可改变
-        self.hard_restrict = torch.logical_and(torch.logical_and(redline_restrict, pred_grid_restrict), lu_zero_restrict)
+        restrict_parts = [redline_restrict, lu_zero_restrict]
+        if self.random_restrict_mask is not None:
+            # C 组: 随机连通块约束 (优先于 grid_restrict, 与 guided 互斥)
+            restrict_parts.append(self.random_restrict_mask.to(redline_restrict.device))
+        elif self.guided:
+            pred_grid_restrict = rUtils.get_grid_restrict_area(
+                self.pred_diff, grid_num=self.score_cfg.runner_utils.grid_num)
+            restrict_parts.append(pred_grid_restrict)
+        self.hard_restrict = functools.reduce(torch.logical_and, restrict_parts)
         self.cls_restrict = rUtils.get_cls_restrict_area(self.ori_plan)
         self.pred_diff_pixelnum = torch.count_nonzero(torch.logical_and(self.hard_restrict, self.pred_diff)).item()
         self.scale_minmax_dict = rUtils.get_scale_minmax_dict(self.pred_diff_pixelnum)
 
-        # 目标函数计算相关信息
-        self.pred_diff_distance_map = cUtils.get_pred_diff_distance_map(self.pred_diff)
+        # C 组: change_target 用 random_mask 替代 pred_diff (目标函数 P_change 项对齐随机约束位置)
+        # 注意: pred_diff 仍保留用于 ANN 推理和 pred_diff_pixelnum 计算
+        if self.random_restrict_mask is not None:
+            self.change_target = self.random_restrict_mask.to(self.pred_diff.dtype)
+        else:
+            self.change_target = self.pred_diff
+
+        # 目标函数计算相关信息: distance map 基于 change_target 生成
+        self.pred_diff_distance_map = cUtils.get_pred_diff_distance_map(self.change_target)
         self.info_dict = cUtils.get_info_dict(
                                     self.ori_plan,
-                                    self.pred_diff,
+                                    self.change_target,
                                     data_dict,
-                                    common_config.carbon_pool_path, 
+                                    common_config.carbon_pool_path,
                                     common_config.maxent_model_path.format(year=self.year),
                                     common_config.maxent_list)
         if self.use_landscape:
@@ -210,12 +243,14 @@ class SimulatedAnnealing:
         torch.Tensor
             优化后的最佳土地利用方案
         """
-        if self.pred_diff_pixelnum < PIXEL_NUM_THRESHOLD_ISCHANGE:
+        if self.pred_diff_pixelnum < _libs_const.PIXEL_NUM_THRESHOLD_ISCHANGE:
             print("预测不发生改变，不进入模拟退火过程。")
             return self.ori_plan
-        
+
         print(f"================= 【{self.index}】SA Running... =================")
-        
+
+        # 计时
+        t0 = time.perf_counter()
         # 初始化温度
         cur_temp = self.t_0
         cur_plan = self.ori_plan.clone()
@@ -242,13 +277,15 @@ class SimulatedAnnealing:
             
             # 计算新解的分数
             new_diff = torch.tensor(new_plan != self.ori_plan, dtype=torch.float32)
-            new_score_list = cal_tgt_function(new_plan, new_diff, 
-                                            self.pred_diff,
+            new_score_list = cal_tgt_function(new_plan, new_diff,
+                                            self.change_target,
                                             self.ori_plan,
-                                            self.info_dict, 
+                                            self.info_dict,
                                             self.es_weight_dict,
                                             cur_temp,
-                                            self.use_landscape)
+                                            self.use_landscape,
+                                            score_cfg=self.score_cfg,
+                                            change_scale_n=self.pred_diff_pixelnum)
             
             # 评估新解
             prev_score = cur_score_list[0]
@@ -335,7 +372,33 @@ class SimulatedAnnealing:
                                     save_path=os.path.join(result_folder, 'best_score.png'),
                                     color_map=COLOR_MAP)
 
+        # ablation 评估口径: 收敛速度记录
+        self._dump_convergence(result_folder, t0)
+
         return self.best_plan
+
+    def _dump_convergence(self, result_folder: str, t0: float) -> None:
+        """保存 total_score_list 和收敛统计, 用于 ablation 实验 A 收敛速度对比"""
+        wall_time = time.perf_counter() - t0
+        score_arr = np.array([float(s) for s in self.total_score_list])
+        np.save(os.path.join(result_folder, 'total_score_list.npy'), score_arr)
+        # 最小化问题: 触及 1.05 * best_score 的首次步数 (best_score 为负时反向)
+        best = float(self.best_score)
+        if best < 0:
+            target = best * 0.95   # |target| < |best|
+        else:
+            target = best * 1.05
+        iter_to_95pct = int(np.argmax(score_arr <= target)) if (score_arr <= target).any() else -1
+        conv = {
+            'iter_to_95pct': iter_to_95pct,
+            'final_best': best,
+            'wall_time_sec': wall_time,
+            'total_iter': len(score_arr),
+            'guided': self.guided,
+            'disable_early_stop': self.disable_early_stop,
+        }
+        with open(os.path.join(result_folder, 'convergence.json'), 'w', encoding='utf-8') as f:
+            json.dump(conv, f, indent=2, ensure_ascii=False)
 
 
 # 主函数（如果需要直接运行SA.py）

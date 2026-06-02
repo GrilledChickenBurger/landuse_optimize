@@ -1,36 +1,18 @@
 # 通用工具函数
+# 注意: 配置加载函数已移至 config_utils.py, 文件/视频 I/O 已移至 io_utils.py。
+#       此处保留 re-export 确保向后兼容。
 
 import os
-import yaml
 from typing import Any, Dict, List, Optional, Tuple, Union
-import argparse
-import rasterio
-from rasterio.transform import from_origin
 import numpy as np
-import cv2
 import torch
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 
-def ensure_folder(folder: str) -> None:
-    if not os.path.exists(folder):
-        os.makedirs(folder)
-
-def get_yaml(path: str) -> argparse.Namespace:
-    with open(path,encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-    config = get_namespace(config)
-    return config
-    
-def get_namespace(config_dict: Dict) -> argparse.Namespace:
-    config = argparse.Namespace()
-    for key, value in config_dict.items():
-        if isinstance(value, dict):
-            value_new = get_namespace(value)  # Recursively convert to Namespace
-        else:
-            value_new = value
-        setattr(config, key, value_new)
-    return config
+# 向后兼容 re-exports (旧代码仍可用 from utils.tools import get_yaml, ensure_folder 等)
+from .config_utils import (get_yaml, get_namespace, get_default_score_cfg, load_score_cfg,
+                           _DEFAULT_SCORE_CFG_DICT)
+from .io_utils import ensure_folder, find_valid_file, save_tif, get_video_from_imgs
 
 def repeat(func: callable, repeat_num: int, replace_element: Any, **kwargs) -> Any:
     """
@@ -367,109 +349,8 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor],
         plt.close()
     return saved_paths
 
-
-def get_video_from_imgs(src_folder,video_folder):
-    """
-    从src_folder中读取所有图片，生成视频并保存到video_folder中。
-    视频文件名格式为：output_video.mp4
-    """
-    print("================= 生成视频中... =================")
-
-    # src_folder里所有图片的路径
-    allvalimg_path = [os.path.join(src_folder, filename) for filename in os.listdir(src_folder)]
-
-    # "SA\results\run_240611_231924\history"
-    frame_num=len(allvalimg_path)
-    print(f"共{frame_num}帧图片, 生成视频中...")
-
-    # 自定义排序函数  
-    def epoch_sort_key(file_path):  
-        """Extract the step number from the file path."""
-        # Split the file path into parts
-        parts = file_path.split('/')
-        # Get the last part (the file name), remove the extension, and split at '_'
-        filename_parts = parts[-1].replace('.png', '').split('_')
-        # Get the last part (the step number) and convert it to an integer
-        step_num = int(filename_parts[-1])
-        return step_num
-
-    img_path = sorted([f for f in allvalimg_path],
-                        key=epoch_sort_key)
-    assert len(img_path)==frame_num
-
-    cv2.setNumThreads(0)  #设置opencv不使用多进程运行，但这条命令只在本作用域有效。
-    cv2.ocl.setUseOpenCL(False)   #设置opencv不使用多进程运行，但这条命令只在本作用域有效。
-
-    # 读取第一张图片以获取视频尺寸
-    frame0 = cv2.imread(img_path[0])
-    height, width, layers = frame0.shape
-
-    fps = frame_num // 10
-    # 保存动画为视频文件  
-    ensure_folder(video_folder)
-    video_name = f'output_video.mp4'  
-    # 定义视频编解码器并创建 VideoWriter 对象
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # 编解码器
-    video = cv2.VideoWriter(f'{video_folder}/{video_name}', fourcc, fps, (width, height))
-
-    for img_file in img_path:
-        frame = cv2.imread(img_file)
-        video.write(frame)
-        del frame
-
-    video.release()
-    print(f"Done. The video has been saved to {video_folder}.\n")
+# ===== 以下函数已移至专用子模块，tools.py 通过 re-export 保持向后兼容 =====
+# get_video_from_imgs -> video_utils.py
+# save_tif, find_valid_file -> file_utils.py
 
 
-def save_tif(plan, output_folder, output_filename):  
-    """
-    保存张量为TIFF文件.
-    Parameters:
-        plan: 编辑后的张量，需转换为numpy数组  
-        output_folder: 保存文件的文件夹位置  
-        output_filename: 输出文件名  
-    """
-    ensure_folder(output_folder)
-    output_path = os.path.join(output_folder, output_filename)  
-  
-    # 获取张量的形状和数据类型  
-    plan_np = convert_to_nparray(plan)
-    _, _, height, width = plan_np.shape 
-  
-    # 创建transform（使用默认的地理参考）
-    transform = from_origin(0, 0, 1, 1)
-  
-    # 使用rasterio创建TIFF文件
-    with rasterio.open(
-        output_path, 'w',
-        driver='GTiff',
-        height=height,
-        width=width,
-        count=1,
-        dtype=plan_np.dtype,
-        crs='+proj=latlong',
-        transform=transform
-    ) as dst:
-        dst.write(plan_np[0, 0, :, :], 1)
-
-
-def find_valid_file(file_paths: List[str], file_description: str = "文件") -> Optional[str]:
-    """
-    从文件路径列表中查找第一个存在的有效文件路径
-    
-    Parameters:
-    -----------
-    file_paths: List[str], 文件路径列表，按优先级排序
-    file_description: str, 文件描述，用于日志输出
-    
-    Returns:
-    --------
-    Optional[str]: 第一个存在的文件路径，如果都不存在则返回None
-    """
-    for file_path in file_paths:
-        if os.path.exists(file_path):
-            return file_path
-    
-    # 如果所有路径都不存在，输出警告信息
-    print(f"警告: 找不到{file_description}文件，尝试的路径有: {', '.join(file_paths)}")
-    return None

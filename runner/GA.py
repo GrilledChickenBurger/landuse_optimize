@@ -1,12 +1,15 @@
 import os
 import random
 import json
+import time
+import functools
 from argparse import Namespace
 from typing import Dict, Any, List, Optional, Union, Tuple
 import copy
 import torch
 import numpy as np
 from libs.const import *
+import libs.const as _libs_const
 from generator.ga_generator import initial_new_population, crossover, mutate
 from calculator.tgt_function_cal import cal_tgt_function
 import utils.calculator_utils as cUtils
@@ -215,8 +218,8 @@ class GeneticAlgorithm:
     遗传算法优化器类
     用于土地利用规划优化
     """
-    def __init__(     
-            self,       
+    def __init__(
+            self,
             config: Namespace,
             common_config: Namespace,
             model_config: Namespace,
@@ -226,6 +229,11 @@ class GeneticAlgorithm:
             save_path: str,
             weight_dict: Optional[Dict[str, float]] = None,
             use_landscape: bool = False,
+            *,
+            guided: bool = True,
+            disable_early_stop: bool = False,
+            score_cfg: Optional[Namespace] = None,
+            random_restrict_mask: Optional[torch.Tensor] = None,
             ):
         """
         
@@ -264,7 +272,13 @@ class GeneticAlgorithm:
         self.index = index
         self.es_weight_dict = weight_dict
         self.use_landscape = use_landscape
-        
+
+        # ablation 开关
+        self.guided = guided
+        self.disable_early_stop = disable_early_stop
+        self.score_cfg = score_cfg if score_cfg is not None else tUtils.get_default_score_cfg()
+        self.random_restrict_mask = random_restrict_mask
+
         # 遗传算法参数
         self.ori_pop_size = config.ori_pop_size  # 初始种群大小
         self.final_pop_size = config.final_pop_size  # 最终种群大小
@@ -273,16 +287,23 @@ class GeneticAlgorithm:
         self.mutation_rate = config.mutation_rate  # 变异率
         self.elite_ratio = vars(config.strategy).get('elite_ratio', 0.1)  # 精英保留比例
         self.strategy = GeneticAlgorithmStrategy(config.strategy).build()  # 策略, 包括select, crossover, mutation的具体实现方式
-        
+
         # 流程提前结束条件
-        self.max_noimprove_gen = config.max_noimprove_gen  # 最大无改进迭代次数
-        self.max_beststuck_gen = config.max_beststuck_gen  # 最优解停滞阈值
-        self.max_noimprove_gen_interpolator = tUtils.PiecewiseLinear(
-                                    [0.2, 1], 
-                                    [config.max_noimprove_gen, config.max_noimprove_gen//2])
-        self.max_beststuck_gen_interpolator = tUtils.PiecewiseLinear(
-                                    [0.2, 1], 
-                                    [config.max_beststuck_gen, config.max_beststuck_gen//4])
+        if self.disable_early_stop:
+            self.max_noimprove_gen = float('inf')
+            self.max_beststuck_gen = float('inf')
+            # interpolator 在禁用早停时返回 inf, 使 max_noimprove_gen/max_beststuck_gen 始终触发不了
+            self.max_noimprove_gen_interpolator = tUtils.PiecewiseLinear([0.2, 1], [float('inf'), float('inf')])
+            self.max_beststuck_gen_interpolator = tUtils.PiecewiseLinear([0.2, 1], [float('inf'), float('inf')])
+        else:
+            self.max_noimprove_gen = config.max_noimprove_gen  # 最大无改进迭代次数
+            self.max_beststuck_gen = config.max_beststuck_gen  # 最优解停滞阈值
+            self.max_noimprove_gen_interpolator = tUtils.PiecewiseLinear(
+                                        [0.2, 1],
+                                        [config.max_noimprove_gen, config.max_noimprove_gen//2])
+            self.max_beststuck_gen_interpolator = tUtils.PiecewiseLinear(
+                                        [0.2, 1],
+                                        [config.max_beststuck_gen, config.max_beststuck_gen//4])
 
         # 包装mutate函数，预先传入固定参数
         self.mutate_func = self._create_mutate_wrapper()
@@ -298,7 +319,8 @@ class GeneticAlgorithm:
         self.pred_diff = rUtils.get_pred_diff(ANN_model, self.ori_plan, self.factors, self.device,
                                                 year=self.year,
                                                 condition_list= ["DEM", "DL", "GDP", "RK"] ,
-                                                normalize=True)
+                                                normalize=True,
+                                                sigmoid_threshold=self.score_cfg.runner_utils.sigmoid_threshold)
         self.frg_model_path = common_config.frg_model_path  # fragstats模型路径
         # tUtils.visualize_tensor_list(
         #     tensor_dict={
@@ -321,19 +343,33 @@ class GeneticAlgorithm:
 
         # 生成新方案相关限制信息
         redline_restrict = data_dict['restrict']
-        pred_grid_restrict = rUtils.get_grid_restrict_area(self.pred_diff)
-        self.hard_restrict = torch.logical_and(redline_restrict, pred_grid_restrict)
+        lu_zero_restrict = (self.ori_plan != 0)  # LU=0的地方不可改变
+        restrict_parts = [redline_restrict, lu_zero_restrict]
+        if self.random_restrict_mask is not None:
+            # C 组: 随机连通块约束 (优先于 grid_restrict, 与 guided 互斥)
+            restrict_parts.append(self.random_restrict_mask.to(redline_restrict.device))
+        elif self.guided:
+            pred_grid_restrict = rUtils.get_grid_restrict_area(
+                self.pred_diff, grid_num=self.score_cfg.runner_utils.grid_num)
+            restrict_parts.append(pred_grid_restrict)
+        self.hard_restrict = functools.reduce(torch.logical_and, restrict_parts)
         self.cls_restrict = rUtils.get_cls_restrict_area(self.ori_plan)
         self.pred_diff_pixelnum = torch.count_nonzero(torch.logical_and(self.hard_restrict, self.pred_diff)).item()
         self.scale_minmax_dict = rUtils.get_scale_minmax_dict(self.pred_diff_pixelnum)
 
-        # 目标函数计算相关信息
-        self.pred_diff_distance_map = cUtils.get_pred_diff_distance_map(self.pred_diff)
+        # C 组: change_target 用 random_mask 替代 pred_diff (目标函数 P_change 项对齐随机约束位置)
+        if self.random_restrict_mask is not None:
+            self.change_target = self.random_restrict_mask.to(self.pred_diff.dtype)
+        else:
+            self.change_target = self.pred_diff
+
+        # 目标函数计算相关信息: distance map 基于 change_target 生成
+        self.pred_diff_distance_map = cUtils.get_pred_diff_distance_map(self.change_target)
         self.info_dict = cUtils.get_info_dict(
                                     self.ori_plan,
-                                    self.pred_diff,
+                                    self.change_target,
                                     data_dict,
-                                    common_config.carbon_pool_path, 
+                                    common_config.carbon_pool_path,
                                     common_config.maxent_model_path.format(year=self.year),
                                     common_config.maxent_list)
         if self.use_landscape:
@@ -584,12 +620,14 @@ class GeneticAlgorithm:
         fitness_list = []
         for plan in population:
             diff = torch.tensor(plan != self.ori_plan, dtype=torch.float32)
-            score_list_ori = cal_tgt_function(plan, diff, 
-                                            self.pred_diff,
+            score_list_ori = cal_tgt_function(plan, diff,
+                                            self.change_target,
                                             self.ori_plan,
-                                            info_dict=self.info_dict, 
+                                            info_dict=self.info_dict,
                                             es_weight_dict=self.es_weight_dict,
-                                            use_landscape=self.use_landscape)
+                                            use_landscape=self.use_landscape,
+                                            score_cfg=self.score_cfg,
+                                            change_scale_n=self.pred_diff_pixelnum)
             score_list = list(score_list_ori)
             score_list[0] = -score_list[0]  # 适应度为负总得分
             fitness_list.append(score_list)  
@@ -617,7 +655,8 @@ class GeneticAlgorithm:
             if random.random() < self.crossover_rate:
                 # 交叉
                 c1, c2 = self.crossover_func(p1, p2, gen_ratio=gen_ratio,
-                                             hard_restrict=self.hard_restrict)
+                                             hard_restrict=self.hard_restrict,
+                                             cls_restrict=self.cls_restrict)
                 c1 = self.mutate_func(c1, gen_ratio=gen_ratio, noimprove_step=noimprove_step)
                 c2 = self.mutate_func(c2, gen_ratio=gen_ratio, noimprove_step=noimprove_step)
                 offspring.extend([c1, c2])
@@ -639,12 +678,14 @@ class GeneticAlgorithm:
         ----------
         best_plan: torch.Tensor 优化后的最佳土地利用方案
         """
-        if self.pred_diff_pixelnum < PIXEL_NUM_THRESHOLD_ISCHANGE:
+        if self.pred_diff_pixelnum < _libs_const.PIXEL_NUM_THRESHOLD_ISCHANGE:
             print("预测不发生改变，不进入遗传算法过程。")
             return self.ori_plan
         
         print("================= GA Running... =================")
-        
+
+        # 计时
+        t0 = time.perf_counter()
         # 初始化当前最佳方案
         cur_plan = self.ori_plan.clone()
         cur_score_list = rUtils.get_initial_score_list()
@@ -784,7 +825,36 @@ class GeneticAlgorithm:
                                     save_path=os.path.join(result_folder, 'best_score.png'),
                                     color_map=COLOR_MAP)
 
+        # ablation 评估口径: 收敛速度记录
+        self._dump_convergence(result_folder, t0)
+
         return self.best_plan
+
+
+    def _dump_convergence(self, result_folder: str, t0: float) -> None:
+        """保存 total_score_list 和收敛统计, 用于 ablation 实验 A 收敛速度对比.
+        注意 GA 的 total_score_list 保存的是 fitness (= -tgt_func), 越大越好.
+        """
+        wall_time = time.perf_counter() - t0
+        score_arr = np.array([float(s) for s in self.total_score_list])
+        np.save(os.path.join(result_folder, 'total_score_list.npy'), score_arr)
+        best_fitness = float(self.best_score)
+        # fitness 越大越好; 95% 边界 = best * 0.95 (若 best>0) 或 best * 1.05 (若 best<0)
+        if best_fitness < 0:
+            target = best_fitness * 1.05
+        else:
+            target = best_fitness * 0.95
+        iter_to_95pct = int(np.argmax(score_arr >= target)) if (score_arr >= target).any() else -1
+        conv = {
+            'iter_to_95pct': iter_to_95pct,
+            'final_best': -best_fitness,  # 输出原始 tgt_func, 与 SA 统一口径
+            'wall_time_sec': wall_time,
+            'total_iter': len(score_arr),
+            'guided': self.guided,
+            'disable_early_stop': self.disable_early_stop,
+        }
+        with open(os.path.join(result_folder, 'convergence.json'), 'w', encoding='utf-8') as f:
+            json.dump(conv, f, indent=2, ensure_ascii=False)
 
 
 

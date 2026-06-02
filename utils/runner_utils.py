@@ -45,6 +45,7 @@ def load_ANN_model(model_type: str, model_path: str, in_ch: int, out_ch: int, de
         checkpoint = torch.load(model_path, map_location=device)
         model.load_state_dict(checkpoint)
         model = model.to(device)  # 确保模型被移动到指定设备上
+        model.eval()  # 推理模式，关闭 BatchNorm/Dropout 的随机性
         return model
     except RuntimeError as e:
         # 处理模型参数不匹配的错误
@@ -68,16 +69,17 @@ def load_ANN_model(model_type: str, model_path: str, in_ch: int, out_ch: int, de
         print(f"错误: 加载模型时发生未知异常: {e}")
         raise
 
-def get_pred_diff(model: torch.nn.Module, 
-                    ori_plan: torch.Tensor, 
-                    factors: torch.Tensor, 
-                    device: torch.device, 
+def get_pred_diff(model: torch.nn.Module,
+                    ori_plan: torch.Tensor,
+                    factors: torch.Tensor,
+                    device: torch.device,
                     year: str,
                     condition_list: List[str],
-                    normalize: bool = False) -> torch.Tensor:
+                    normalize: bool = False,
+                    sigmoid_threshold: float = 0.5) -> torch.Tensor:
     """
     通过预训练的ANN模型, 得到5年后将会发生变化的区域
-    
+
     Parameters:
     ----------
         model: torch.nn.Module, 预训练的ANN模型
@@ -86,13 +88,16 @@ def get_pred_diff(model: torch.nn.Module,
         year: str, 年份, 可选值为 '10', '15', '20'
         condition_list: List[str], 驱动因子列表, 必须和factors中的channel顺序对应
         normalize: bool, 是否对因子进行标准化, default=False
-    
+        sigmoid_threshold: float, sigmoid 输出二值化阈值, default=0.5
+
     Returns:
     --------
         pred_diff: tensor, [1,1,128,128], 0-1 二值张量，0表示预测不变，1表示预测将发生变化
     """
     # 确保模型在正确的设备上
     model = model.to(device)
+    # clone 避免 inplace 修改上游 data_dict（ablation 多次重复实验共用 data_dict）
+    factors_local = factors.clone()
     if normalize:
         assert condition_list is not None, "condition_list must be provided when normalize is True."
         params = FACTOR_PARAMS_DICT[year]  # 获取该年份的miu, epsilon参数
@@ -100,15 +105,16 @@ def get_pred_diff(model: torch.nn.Module,
         for j, factor_name in enumerate(condition_list):
             if factor_name in params:  # 只对在参数字典中定义的因子进行标准化
                 log = factor_name in ALL_LOG_FACTORS  # 是否对该因子取对数
-                factors[:, j] = apply_norm(factors[:, j], factor_name, params, log=log)
-    
+                factors_local[:, j] = apply_norm(factors_local[:, j], factor_name, params, log=log)
+
     ori_plan_onehot = one_hot_lu(ori_plan[0]).unsqueeze(0)
 
     # 注意concat的顺序！！！！！
-    cond = torch.cat((factors, ori_plan_onehot),dim=1).to(device)
-    pred_diff_raw = model(cond)
-    pred_diff=F.sigmoid(pred_diff_raw)
-    pred_diff=torch.where(pred_diff>=0.5, 1, 0)
+    cond = torch.cat((factors_local, ori_plan_onehot),dim=1).to(device)
+    with torch.no_grad():
+        pred_diff_raw = model(cond)
+    pred_diff = torch.sigmoid(pred_diff_raw)
+    pred_diff = torch.where(pred_diff >= sigmoid_threshold, 1, 0)
 
     return pred_diff.detach().cpu()
 

@@ -1,3 +1,5 @@
+import os
+
 # 每个像素代表的面积转换为公顷 (1公顷 = 10,000平方米)
 PIXEL_AREA_IN_HECTARES = (30 * 30) / 10000
 
@@ -49,14 +51,29 @@ ALL_ES_TYPES_DICT = {
     "water": "水源涵养",
     "culture": "文化服务",
 }
-# 水源涵养计算：不同生态系统的地表径流系数
+# 水源涵养计算：不同生态系统的地表径流系数 (按 LU 二级类精确赋值)
+# 数值单位为小数 (原始表为百分比, 除以 100 转换)
+# 未在原表列出的二级类按其一级类兜底:
+#   水域 (4x) -> 0   建设用地 (5x) -> 1   未利用地 (6x) -> 1
 WATER_SUPPLY_PARAM = {
-    1: 0.347,  # 水田
-    2: 0.01, # 林地
-    3: 0.08,  # 草原
-    4: 0,  # 水域
-    5: 1,  # 建设用地
-    6: 1,  # 未利用地
+    # 耕地
+    11: 0.3470,   # 水田
+    12: 0.4969,   # 旱地
+    # 林地
+    21: 0.02038,  # 有林地
+    22: 0.0420,   # 灌木林
+    23: 0.1920,   # 疏林地
+    24: 0.1222,   # 其他林地
+    # 草地
+    31: 0.0478,   # 高覆盖度草地
+    32: 0.08785,  # 中覆盖度草地
+    33: 0.1827,   # 低覆盖度草地
+    # 水域 (按一级类 4 -> 0 兜底)
+    41: 0.0, 42: 0.0, 43: 0.0, 44: 0.0, 45: 0.0, 46: 0.0,
+    # 建设用地 (按一级类 5 -> 1 兜底)
+    51: 1.0, 52: 1.0, 53: 1.0,
+    # 未利用地 (按一级类 6 -> 1 兜底)
+    61: 1.0, 62: 1.0, 63: 1.0, 64: 1.0, 65: 1.0, 66: 1.0, 67: 1.0,
 }
 
 # 粮食生产计算：修正系数
@@ -72,6 +89,22 @@ FOOD_SUPPLY_PARAM = {
 PIXEL_NUM_THRESHOLD_ISCHANGE = 30
 # 像素数阈值，小于该值将从diff中移除
 PIXEL_NUM_THRESHOLD_REMOVE = 20
+
+
+def apply_const_overrides(score_cfg) -> None:
+    """
+    根据 score_cfg.const 覆写本模块的模块级常量, 仅在 ablation pipeline 入口调用一次.
+    其它 pipeline 不调用, 常量保持原值, 行为不变.
+    """
+    global PIXEL_NUM_THRESHOLD_ISCHANGE, WATER_SUPPLY_PARAM
+    c = score_cfg.const
+    PIXEL_NUM_THRESHOLD_ISCHANGE = c.pixel_num_threshold_ischange
+    # water_supply_param 在 yaml 中为 dict-like, 经 get_namespace 后会成为 Namespace
+    if hasattr(c.water_supply_param, '__dict__'):
+        # 将 Namespace 还原为 {int: float} dict, 保持 const.WATER_SUPPLY_PARAM 原有结构
+        WATER_SUPPLY_PARAM = {int(k): v for k, v in vars(c.water_supply_param).items()}
+    else:
+        WATER_SUPPLY_PARAM = {int(k): v for k, v in dict(c.water_supply_param).items()}
 
 ALL_PACK = [[10, 15], [15, 20], [10, 20], [-1, -1]]
 # 每个pack组合对应的变换增强重复次数
@@ -213,7 +246,12 @@ FACTOR_PARAMS_DICT={
 
 # 原始数据根目录, 保存着tif文件配套的tfw等文件
 # 若需要frg模型评估方案, 则待评估方案需要从此处复制tfw文件
-RAW_DATA_ROOT = 'D:\\_programming\\_LAB_ASSIGMENTS\\AAAAA栅格分割'
+# 可通过环境变量 LU_OPTIM_DATA_ROOT 覆盖
+RAW_DATA_ROOT = os.environ.get('LU_OPTIM_DATA_ROOT',
+                               'D:\\_programming\\_LAB_ASSIGMENTS\\AAAAA栅格分割')
+
+# 默认驱动因子列表 (pred_diff 计算中 normalization 使用的条件因子)
+DEFAULT_CONDITION_LIST = ["DEM", "DL", "GDP", "RK"]
 
 FACTORS_NAME_DICT = {
     'RA': '耕地红线(不可变更)',

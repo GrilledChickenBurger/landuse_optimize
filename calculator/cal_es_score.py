@@ -213,7 +213,7 @@ def calculate_carbon_storage(plan: torch.Tensor, carbon_pool: Dict) -> torch.Ten
     return carbon_sum
 
 
-def calculate_water_supply(plan: torch.Tensor, RAIN: torch.Tensor, ZSL: torch.Tensor, R_dict: Dict = WATER_SUPPLY_PARAM) -> Tuple[torch.Tensor, torch.Tensor]:
+def calculate_water_supply(plan: torch.Tensor, RAIN: torch.Tensor, ZSL: torch.Tensor, R_dict: Dict = None) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     第2-3项: 计算ES-水资源供给
     ------
@@ -227,20 +227,24 @@ def calculate_water_supply(plan: torch.Tensor, RAIN: torch.Tensor, ZSL: torch.Te
         plan: tensor, [1,1,128,128]
         RAIN: 年均降雨量, tensor, [1,1,128,128]
         ZSL: 年均蒸发量, tensor, [1,1,128,128]
-        R_dict: Dict, 水资源供给修正系数, 格式为{lu: float}
+        R_dict: Dict, 水资源供给修正系数, 格式为{lu: float}; None 时延迟读取 libs.const.WATER_SUPPLY_PARAM
 
     Returns:
     ---------
         Q: tensor, [1,1,128,128]
         Q_sum: tensor, 单位为m3/a
     """
-    # 不同生态系统的地表径流系数
+    if R_dict is None:
+        # 延迟引用, 让 apply_const_overrides 修改的 const 模块级常量能被本次调用看到
+        import libs.const as _const
+        R_dict = _const.WATER_SUPPLY_PARAM
+    # 不同生态系统的地表径流系数 (按 LU 二级类精确查表)
     plan_int = torch.tensor(plan, dtype=torch.int32)
 
-    R = torch.zeros_like(plan_int)
+    # 注意 dtype 必须为 float, 否则 R_dict 中的小数系数 (如 0.347) 会被 int32 截断为 0
+    R = torch.zeros_like(plan_int, dtype=torch.float32)
     for lu, r in R_dict.items():
-        mask = (plan_int >= int(lu)*10) & (plan_int < int(lu)*10+10)
-        R[mask] = r
+        R[plan_int == int(lu)] = r
 
     Q = RAIN - RAIN * R - ZSL
 

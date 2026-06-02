@@ -1,19 +1,25 @@
 import scipy.ndimage
 import torch
 import numpy as np
+from typing import Optional
+from argparse import Namespace
 
 from utils.calculator_utils import get_numfeature_dict, get_perimeter
+from utils.tools import get_default_score_cfg
 
-def cal_landscape_score(cur_plan: torch.Tensor, cur_diff: torch.Tensor, 
+def cal_landscape_score(cur_plan: torch.Tensor, cur_diff: torch.Tensor,
                             ori_plan: torch.Tensor,
                             info_dict: dict,
-                            change_ratio: float = 0.6) -> torch.Tensor:
+                            change_ratio: float = 0.6,
+                            score_cfg: Optional[Namespace] = None) -> torch.Tensor:
     """
     第3?项: 衡量当前更改区域里的所有连通区域和ori_plan对应同类区域之间的距离.\n
     Parameters:
         plan: tensor, [1,1,128,128]
         change_area: tensor, [1,1,128,128]
+        score_cfg: Namespace, optional, 评分常数配置. None 时使用默认值
     """
+    cfg = score_cfg if score_cfg is not None else get_default_score_cfg()
     # 当前和原始方案里，每个LU类的连通区域数
     tmp_num_feature_list = get_numfeature_dict(cur_plan)
     ori_num_feature_list = info_dict["ori_num_feature_list"]
@@ -90,5 +96,5 @@ def cal_landscape_score(cur_plan: torch.Tensor, cur_diff: torch.Tensor,
         cls_distance = cls_distance + d_num_features**2 
         total_cls_distance += cls_distance
 
-    total_score = total_cls_distance + total_pure_score *(0.3+change_ratio*0.2)
+    total_score = total_cls_distance + total_pure_score *(cfg.landscape.pure_base + change_ratio * cfg.landscape.pure_change)
     return torch.tensor(total_score)

@@ -1,7 +1,10 @@
 import torch
 import numpy as np
 import scipy.ndimage
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+from argparse import Namespace
+
+from utils.tools import get_default_score_cfg
 
 """
 核心函数1:
@@ -10,7 +13,8 @@ from typing import Dict, Any
     scipy.ndimage.label: 标记图像中的连通区域
 """
 
-def cal_change_score(cur_diff: torch.Tensor, pred_diff: torch.Tensor, info_dict: Dict[str, Any]) -> torch.Tensor:
+def cal_change_score(cur_diff: torch.Tensor, pred_diff: torch.Tensor, info_dict: Dict[str, Any],
+                     score_cfg: Optional[Namespace] = None) -> torch.Tensor:
     """
     计算变化得分, 表示当前更改区域到预测变化区域的距离【相对值】, 越大表示越好, 范围:[-inf, 1]\n
     Parameters:
@@ -18,24 +22,29 @@ def cal_change_score(cur_diff: torch.Tensor, pred_diff: torch.Tensor, info_dict:
         cur_diff: tensor, [1,1,128,128], 0-1 binary, 1 表示新方案对比原方案的变化区域,
         pred_diff: tensor, [1,1,128,128], 0-1 binary, 1 表示预测方案对比原方案的变化区域
         info_dict: Dict[str, Any], 包含预测变化区域距离地图和最小变化得分等信息
-    
+        score_cfg: Namespace, optional, 评分常数配置. None 时使用默认值
+
     Returns:
     -------
         change_score_relative: torch.Tensor, 变化得分, 表示当前更改区域到预测变化区域的距离
     """
-    change_value = cal_change_value(cur_diff, pred_diff, info_dict['pred_diff_distance_map'])
+    cfg = score_cfg if score_cfg is not None else get_default_score_cfg()
+    change_value = cal_change_value(cur_diff, pred_diff, info_dict['pred_diff_distance_map'],
+                                    inside_reward_coef=cfg.change_score.inside_reward_coef)
     # min_change_score = info_dict['min_change_score']
     # change_score_relative = change_value / min_change_score
     return change_value
 
 
-def cal_change_value(cur_diff: torch.Tensor, pred_diff: torch.Tensor, pred_diff_distance_map: torch.Tensor) -> torch.Tensor:
+def cal_change_value(cur_diff: torch.Tensor, pred_diff: torch.Tensor, pred_diff_distance_map: torch.Tensor,
+                     inside_reward_coef: float = 10) -> torch.Tensor:
     """
     第1项: 衡量当前更改区域到real_change_area区域之间的距离【绝对值】.\n
     Parameters:
     -------
         cur_diff: tensor, [1,1,128,128], 0-1 binary, 1 表示新方案对比原方案的变化区域,
         pred_diff: tensor, [1,1,128,128], 0-1 binary, 1 表示预测方案对比原方案的变化区域
+        inside_reward_coef: float, 交集 / 完全重叠时的奖励系数, 默认 10
 
     Returns:
     -------
@@ -60,13 +69,13 @@ def cal_change_value(cur_diff: torch.Tensor, pred_diff: torch.Tensor, pred_diff_
         distance, intersection_area = cal_distance(cur_area, pred_diff_np, pred_diff_distance_map_np)
         # cur_area 和 pred_diff 完全不重叠
         if distance > 0 and intersection_area == 0:
-            total_distance += (area ** 2) * distance 
+            total_distance += (area ** 2) * distance
         elif distance > 0 and intersection_area > 0 and area - intersection_area > 0:
             diff_area = area - intersection_area
-            total_distance += ((diff_area ** 2) * distance - (intersection_area ** 2) * 10)
+            total_distance += ((diff_area ** 2) * distance - (intersection_area ** 2) * inside_reward_coef)
         # cur_area 完全在 pred_diff 内
         elif distance == 0 or area - intersection_area == 0:
-            total_distance -= (area ** 2) * 10 
+            total_distance -= (area ** 2) * inside_reward_coef
 
     return torch.tensor(total_distance)
 
