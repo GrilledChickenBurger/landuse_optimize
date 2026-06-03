@@ -60,3 +60,6 @@ ablation:
   guided: true             # 无引导时设 false: 跳过 pred_grid_restrict
   disable_change_score: false  # 无引导时设 true: tgt_func 屏蔽 change 项
   disable_early_stop: false    # 实验 A 设 true: 禁用 noimprove/beststuck 早停
+  quantity_penalty_C: 400000   # B组面积惩罚/奖励系数，与 change_score 量级对齐
+  quantity_penalty_delta: 0.1  # 软死区半宽（±10%）
+  quantity_penalty_power: 2    # 死区外惩罚幂次

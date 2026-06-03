@@ -64,7 +64,7 @@ def cal_tgt_function(cur_plan: torch.Tensor,
         lambda_ES = t.lambda_ES_low + (t.lambda_ES_high - t.lambda_ES_low) * ratio
         lambda_LS = t.lambda_LS_low + (t.lambda_LS_high - t.lambda_LS_low) * ratio
 
-    change_term = 0.0 if cfg.ablation.disable_change_score else change_relative_score
+    change_term = change_relative_score
     tgt_func = change_term - lambda_ES * es_relative_score + lambda_LS * landscape_score
     return tgt_func, change_relative_score, es_relative_score, es_relative_score_dict, landscape_score
 

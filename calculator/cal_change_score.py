@@ -13,6 +13,23 @@ from utils.tools import get_default_score_cfg
     scipy.ndimage.label: 标记图像中的连通区域
 """
 
+def cal_quantity_value(cur_diff: torch.Tensor, target_n: int,
+                       delta: float = 0.1, C: float = 4e5, power: float = 2) -> torch.Tensor:
+    """纯数量引导的变化得分（B_unguided 用）。
+
+    返回值：标量，越大表示越差（需最小化）。
+    ratio=1.0 时奖励最大 (-C)，死区外惩罚二次增长。
+    """
+    cur_n = torch.count_nonzero(cur_diff).item()
+    ratio = cur_n / max(target_n, 1)
+    dev = abs(ratio - 1)
+    if dev <= delta:
+        score = -C * (1 - dev / delta)
+    else:
+        score = ((dev - delta) ** power) * C
+    return torch.tensor(score)
+
+
 def cal_change_score(cur_diff: torch.Tensor, pred_diff: torch.Tensor, info_dict: Dict[str, Any],
                      score_cfg: Optional[Namespace] = None) -> torch.Tensor:
     """
@@ -29,6 +46,15 @@ def cal_change_score(cur_diff: torch.Tensor, pred_diff: torch.Tensor, info_dict:
         change_score_relative: torch.Tensor, 变化得分, 表示当前更改区域到预测变化区域的距离
     """
     cfg = score_cfg if score_cfg is not None else get_default_score_cfg()
+
+    if cfg.ablation.disable_change_score:
+        # B_unguided：纯变化面积限制模式，只限制像素总数，不限位置
+        target_n = torch.count_nonzero(pred_diff).item()
+        C = getattr(cfg.ablation, 'quantity_penalty_C', 4e5)
+        delta = getattr(cfg.ablation, 'quantity_penalty_delta', 0.1)
+        power = getattr(cfg.ablation, 'quantity_penalty_power', 2)
+        return cal_quantity_value(cur_diff, target_n, delta=delta, C=C, power=power)
+
     change_value = cal_change_value(cur_diff, pred_diff, info_dict['pred_diff_distance_map'],
                                     inside_reward_coef=cfg.change_score.inside_reward_coef)
     # min_change_score = info_dict['min_change_score']
