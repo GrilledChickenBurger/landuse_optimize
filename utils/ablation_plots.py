@@ -124,7 +124,8 @@ def plot_tornado(ablation_root: str,
                  baseline_name: str = 'A_guided',
                  save_path: Optional[str] = None,
                  metric: str = 'final_best') -> Dict[str, Dict[str, float]]:
-    """画 tornado 图: 每个 B_* knob 相对 baseline 的归一化扰动幅度.
+    """[deprecated] 画 tornado 图: 每个 B_* knob 相对 baseline 的归一化扰动幅度.
+    当前 build_experiment_matrix 不生成 B_* 实验，保留供未来参数敏感度分析使用.
 
     Parameters
     ----------
@@ -218,21 +219,21 @@ def plot_tornado(ablation_root: str,
 
 
 # ============================================================
-# 2. 收敛曲线: A_guided vs A_unguided
+# 2. 收敛曲线: A_guided vs B_unguided
 # ============================================================
 def plot_convergence(ablation_root: str,
                      save_folder: Optional[str] = None,
                      smooth_window: int = 20) -> None:
-    """对每个样本画 A_guided vs A_unguided 的 total_score 收敛曲线 (滑动平均).
+    """对每个样本画 A_guided vs B_unguided 的 total_score 收敛曲线 (滑动平均).
     每个样本可能有多 run, 此处取 run_0 的曲线作为代表.
     """
     save_folder = save_folder or os.path.join(ablation_root, 'plots')
     ensure_folder(save_folder)
 
     guided_dir = os.path.join(ablation_root, 'A_guided')
-    unguided_dir = os.path.join(ablation_root, 'A_unguided')
+    unguided_dir = os.path.join(ablation_root, 'B_unguided')
     if not (os.path.isdir(guided_dir) and os.path.isdir(unguided_dir)):
-        print(f"警告: A_guided 或 A_unguided 不存在, 跳过收敛曲线")
+        print(f"警告: A_guided 或 B_unguided 不存在, 跳过收敛曲线")
         return
 
     # 找两边都有的样本
@@ -240,7 +241,7 @@ def plot_convergence(ablation_root: str,
     samples_u = set(_list_samples(unguided_dir))
     common = sorted(samples_g & samples_u)
     if not common:
-        print(f"警告: A_guided / A_unguided 无共同样本, 跳过")
+        print(f"警告: A_guided / B_unguided 无共同样本, 跳过")
         return
 
     def _smooth(arr: np.ndarray, w: int) -> np.ndarray:
@@ -285,7 +286,7 @@ def plot_convergence(ablation_root: str,
 
 
 # ============================================================
-# 3. LU 并排: ori / A_guided.best / A_unguided.best
+# 3. LU 并排: ori / A_guided.best / B_unguided.best
 # ============================================================
 def plot_lu_side_by_side(ablation_root: str,
                          index: str,
@@ -316,7 +317,7 @@ def plot_lu_side_by_side(ablation_root: str,
         return os.path.join(runs[0], f'plans_{idx_num}') if runs else None
 
     g_plan_dir = _first_run_plan_dir('A_guided')
-    u_plan_dir = _first_run_plan_dir('A_unguided')
+    u_plan_dir = _first_run_plan_dir('B_unguided')
     ori = _read_tif(os.path.join(g_plan_dir, 'ori_plan.TIF')) if g_plan_dir else None
     g_best = _read_tif(os.path.join(g_plan_dir, 'best_plan.TIF')) if g_plan_dir else None
     u_best = _read_tif(os.path.join(u_plan_dir, 'best_plan.TIF')) if u_plan_dir else None
@@ -347,7 +348,9 @@ def plot_lu_side_by_side(ablation_root: str,
 def run_all_plots(ablation_root: str,
                   baseline_name: str = 'A_guided',
                   indexes_for_lu: Optional[List[str]] = None) -> None:
-    """一站式: 跑 tornado (多 metric) + convergence + LU 并排."""
+    """[deprecated] 旧一站式入口: 跑 tornado (多 metric) + convergence + LU 并排.
+    当前 build_experiment_matrix 不生成 B_* 实验，tornado 部分永远跳过.
+    推荐使用 run_all_ablation_plots() 替代."""
     metrics = ['final_best', 'wall_time_sec', 'iter_to_95pct']
     for m in metrics:
         try:
@@ -537,7 +540,8 @@ def aggregate_runs(exp_dir: str, index: str) -> Dict[str, Dict[str, Any]]:
 
 
 def recompute_iter_to_95pct(exp_dir: str, index: str) -> None:
-    """用多次 final_best 均值作为参考最优, 重算每次 run 的 iter_to_95pct_repeat."""
+    """用多次 final_best 均值作为参考最优, 重算每次 run 的 iter_to_95pct_repeat.
+    区分 SA (最小化 tgt_func) 和 GA (最大化 fitness=-tgt_func) 的口径差异."""
     run_dirs = _iter_run_dirs(exp_dir, index)
     if len(run_dirs) < 2:
         return
@@ -553,23 +557,51 @@ def recompute_iter_to_95pct(exp_dir: str, index: str) -> None:
     if not finals:
         return
     ref_best = float(np.mean(finals))
-    # 最小化问题: target = ref_best * 1.05 (ref_best>0) 或 * 0.95 (<0)
-    target = ref_best * 1.05 if ref_best >= 0 else ref_best * 0.95
 
-    for rd in run_dirs:
-        npy_p = os.path.join(rd, 'total_score_list.npy')
-        conv_p = os.path.join(rd, 'convergence.json')
-        if not (os.path.exists(npy_p) and os.path.exists(conv_p)):
-            continue
-        arr = np.load(npy_p)
-        hit = (arr <= target).any() if ref_best >= 0 else (arr <= target).any()
-        iter_repeat = int(np.argmax(arr <= target)) if hit else -1
-        with open(conv_p, 'r', encoding='utf-8') as f:
-            conv = json.load(f)
-        conv['iter_to_95pct_repeat'] = iter_repeat
-        conv['ref_best_repeat'] = ref_best
-        with open(conv_p, 'w', encoding='utf-8') as f:
-            json.dump(conv, f, indent=2, ensure_ascii=False)
+    # 从 ablation_summary.json 读取 runner_type, 区分 SA/GA 口径
+    ablation_root = os.path.dirname(exp_dir)
+    summary_path = os.path.join(ablation_root, 'ablation_summary.json')
+    runner_type = 'SA'
+    if os.path.exists(summary_path):
+        with open(summary_path, 'r', encoding='utf-8') as f:
+            summary = json.load(f)
+        runner_type = summary.get('runner_type', 'SA').upper()
+
+    if runner_type == 'SA':
+        # arr = total_score_list = tgt_func, 越小越好
+        target = ref_best * 1.05 if ref_best >= 0 else ref_best * 0.95
+        for rd in run_dirs:
+            npy_p = os.path.join(rd, 'total_score_list.npy')
+            conv_p = os.path.join(rd, 'convergence.json')
+            if not (os.path.exists(npy_p) and os.path.exists(conv_p)):
+                continue
+            arr = np.load(npy_p)
+            hit = (arr <= target).any()
+            iter_repeat = int(np.argmax(arr <= target)) if hit else -1
+            with open(conv_p, 'r', encoding='utf-8') as f:
+                conv = json.load(f)
+            conv['iter_to_95pct_repeat'] = iter_repeat
+            conv['ref_best_repeat'] = ref_best
+            with open(conv_p, 'w', encoding='utf-8') as f:
+                json.dump(conv, f, indent=2, ensure_ascii=False)
+    else:  # GA
+        # arr = total_score_list = fitness = -tgt_func, 越大越好
+        ref_best_fitness = -ref_best
+        target = ref_best_fitness * 0.95 if ref_best_fitness >= 0 else ref_best_fitness * 1.05
+        for rd in run_dirs:
+            npy_p = os.path.join(rd, 'total_score_list.npy')
+            conv_p = os.path.join(rd, 'convergence.json')
+            if not (os.path.exists(npy_p) and os.path.exists(conv_p)):
+                continue
+            arr = np.load(npy_p)
+            hit = (arr >= target).any()
+            iter_repeat = int(np.argmax(arr >= target)) if hit else -1
+            with open(conv_p, 'r', encoding='utf-8') as f:
+                conv = json.load(f)
+            conv['iter_to_95pct_repeat'] = iter_repeat
+            conv['ref_best_repeat'] = ref_best
+            with open(conv_p, 'w', encoding='utf-8') as f:
+                json.dump(conv, f, indent=2, ensure_ascii=False)
 
 
 def build_stability_table(ablation_root: str,
