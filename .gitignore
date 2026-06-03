@@ -27,6 +27,8 @@ results/
 # 临时文件
 *.tmp
 *.temp
+**/*temp*/
+**/*tmp*/
 
 # 系统文件
 .DS_Store
