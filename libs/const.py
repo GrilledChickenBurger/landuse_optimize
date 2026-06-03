@@ -97,11 +97,18 @@ PIXEL_NUM_THRESHOLD_ISCHANGE = 30
 # 像素数阈值，小于该值将从diff中移除
 PIXEL_NUM_THRESHOLD_REMOVE = 20
 
+# 保存原始默认值，用于实验后恢复（避免跨实验状态泄漏）
+_DEFAULT_PIXEL_NUM_THRESHOLD_ISCHANGE = PIXEL_NUM_THRESHOLD_ISCHANGE
+_DEFAULT_WATER_SUPPLY_PARAM = WATER_SUPPLY_PARAM.copy()
+
 
 def apply_const_overrides(score_cfg) -> None:
     """
     根据 score_cfg.const 覆写本模块的模块级常量, 仅在 ablation pipeline 入口调用一次.
     其它 pipeline 不调用, 常量保持原值, 行为不变.
+
+    注意：本函数修改全局状态。若同进程顺序运行多个不同 score_cfg 的实验，
+    前面的覆写会泄漏到后面。实验结束后建议调用 restore_const_defaults() 恢复默认值。
     """
     global PIXEL_NUM_THRESHOLD_ISCHANGE, WATER_SUPPLY_PARAM
     c = score_cfg.const
@@ -112,6 +119,13 @@ def apply_const_overrides(score_cfg) -> None:
         WATER_SUPPLY_PARAM = {int(k): v for k, v in vars(c.water_supply_param).items()}
     else:
         WATER_SUPPLY_PARAM = {int(k): v for k, v in dict(c.water_supply_param).items()}
+
+
+def restore_const_defaults() -> None:
+    """恢复 apply_const_overrides 修改前的模块级常量默认值，防止跨实验状态泄漏。"""
+    global PIXEL_NUM_THRESHOLD_ISCHANGE, WATER_SUPPLY_PARAM
+    PIXEL_NUM_THRESHOLD_ISCHANGE = _DEFAULT_PIXEL_NUM_THRESHOLD_ISCHANGE
+    WATER_SUPPLY_PARAM = _DEFAULT_WATER_SUPPLY_PARAM.copy()
 
 ALL_PACK = [[10, 15], [15, 20], [10, 20], [-1, -1]]
 # 每个pack组合对应的变换增强重复次数

@@ -56,19 +56,19 @@ def build_experiment_matrix(mode: str = 'ablation', n_repeats: int = 1) -> List[
         matrix.append({
             'name': 'A_guided',
             'overrides': {},
-            'flags': {'guided': True, 'disable_early_stop': True},
+            'flags': {'guided': True, 'disable_early_stop': True, 'skip_threshold_check': True},
             'n_repeats': n_repeats, 'group': 'A',
         })
         matrix.append({
             'name': 'B_unguided',
             'overrides': {'ablation.disable_change_score': True},
-            'flags': {'guided': False, 'disable_early_stop': True},
+            'flags': {'guided': False, 'disable_early_stop': True, 'skip_threshold_check': True},
             'n_repeats': n_repeats, 'group': 'B',
         })
         matrix.append({
             'name': 'C_random',
             'overrides': {},
-            'flags': {'guided': False, 'disable_early_stop': True},
+            'flags': {'guided': False, 'disable_early_stop': True, 'skip_threshold_check': True},
             'n_repeats': n_repeats, 'group': 'C',
         })
     else:
@@ -201,12 +201,27 @@ def ablation_pipeline(opt_cfg_path: str,
         group = exp.get('group', 'A')
 
         type_config = copy.deepcopy(type_config_base)
-        if group in ('A', 'B', 'C') and runner_config.type != 'SA':
-            type_config.max_gen = 3000
+        if mode == 'ablation' and runner_config.type == 'SA':
+            type_config.T_end = 1e-6  # ablation 需要完整收敛，降低终止温度
+        if mode == 'ablation' and runner_config.type != 'SA':
+            type_config.max_gen = 8000  # ablation GA 需要更多代数观察完整收敛
 
         exp_save_folder = os.path.join(root_save, exp_name)
         ensure_folder(exp_save_folder)
-        processed_samples = set(os.listdir(exp_save_folder)) if is_processed else set()
+        # 新结构: run_r/{index}/; 老结构: {index}/run_r/ — 统一兼容扫描
+        processed_samples = set()
+        if is_processed:
+            for entry in os.listdir(exp_save_folder):
+                entry_path = os.path.join(exp_save_folder, entry)
+                if not os.path.isdir(entry_path):
+                    continue
+                if entry.startswith('run_'):
+                    # 新结构: run_r/ 下直接是样本 index
+                    processed_samples.update(d for d in os.listdir(entry_path)
+                                             if os.path.isdir(os.path.join(entry_path, d)))
+                else:
+                    # 老结构: entry 本身就是样本 index
+                    processed_samples.add(entry)
 
         # 8.3 遍历样本
         for i, data_pack in enumerate(dataloader):
@@ -271,6 +286,7 @@ def ablation_pipeline(opt_cfg_path: str,
                     use_landscape=use_landscape,
                     guided=exp['flags'].get('guided', True),
                     disable_early_stop=exp['flags'].get('disable_early_stop', False),
+                    skip_threshold_check=exp['flags'].get('skip_threshold_check', False),
                     score_cfg=score_cfg,
                     random_restrict_mask=random_mask,
                 )

@@ -232,6 +232,7 @@ class GeneticAlgorithm:
             *,
             guided: bool = True,
             disable_early_stop: bool = False,
+            skip_threshold_check: bool = False,
             score_cfg: Optional[Namespace] = None,
             random_restrict_mask: Optional[torch.Tensor] = None,
             ):
@@ -276,6 +277,7 @@ class GeneticAlgorithm:
         # ablation 开关
         self.guided = guided
         self.disable_early_stop = disable_early_stop
+        self.skip_threshold_check = skip_threshold_check
         self.score_cfg = score_cfg if score_cfg is not None else tUtils.get_default_score_cfg()
         self.random_restrict_mask = random_restrict_mask
 
@@ -354,7 +356,7 @@ class GeneticAlgorithm:
             restrict_parts.append(pred_grid_restrict)
         self.hard_restrict = functools.reduce(torch.logical_and, restrict_parts)
         self.cls_restrict = rUtils.get_cls_restrict_area(self.ori_plan)
-        self.pred_diff_pixelnum = torch.count_nonzero(torch.logical_and(self.hard_restrict, self.pred_diff)).item()
+        self.pred_diff_pixelnum = torch.count_nonzero(torch.logical_and(self.hard_restrict, self.change_target)).item()
         self.scale_minmax_dict = rUtils.get_scale_minmax_dict(self.pred_diff_pixelnum)
 
         # C 组: change_target 用 random_mask 替代 pred_diff (目标函数 P_change 项对齐随机约束位置)
@@ -678,7 +680,7 @@ class GeneticAlgorithm:
         ----------
         best_plan: torch.Tensor 优化后的最佳土地利用方案
         """
-        if self.pred_diff_pixelnum < _libs_const.PIXEL_NUM_THRESHOLD_ISCHANGE:
+        if not self.skip_threshold_check and self.pred_diff_pixelnum < _libs_const.PIXEL_NUM_THRESHOLD_ISCHANGE:
             print("预测不发生改变，不进入遗传算法过程。")
             return self.ori_plan
         
