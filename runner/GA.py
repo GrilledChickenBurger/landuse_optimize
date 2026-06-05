@@ -356,14 +356,15 @@ class GeneticAlgorithm:
             restrict_parts.append(pred_grid_restrict)
         self.hard_restrict = functools.reduce(torch.logical_and, restrict_parts)
         self.cls_restrict = rUtils.get_cls_restrict_area(self.ori_plan)
-        self.pred_diff_pixelnum = torch.count_nonzero(torch.logical_and(self.hard_restrict, self.change_target)).item()
-        self.scale_minmax_dict = rUtils.get_scale_minmax_dict(self.pred_diff_pixelnum)
 
         # C 组: change_target 用 random_mask 替代 pred_diff (目标函数 P_change 项对齐随机约束位置)
         if self.random_restrict_mask is not None:
             self.change_target = self.random_restrict_mask.to(self.pred_diff.dtype)
         else:
             self.change_target = self.pred_diff
+
+        self.pred_diff_pixelnum = torch.count_nonzero(torch.logical_and(self.hard_restrict, self.change_target)).item()
+        self.scale_minmax_dict = rUtils.get_scale_minmax_dict(self.pred_diff_pixelnum)
 
         # 目标函数计算相关信息: distance map 基于 change_target 生成
         self.pred_diff_distance_map = cUtils.get_pred_diff_distance_map(self.change_target)
