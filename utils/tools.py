@@ -3,6 +3,7 @@
 #       此处保留 re-export 确保向后兼容。
 
 import os
+from argparse import Namespace
 from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import torch
@@ -174,25 +175,6 @@ def draw_multi_line(x_data: List[float], y_datas: List[List[float]],
         plt.savefig(save_path)
     plt.close()
 
-def show_array_result(array: Any, title: Optional[str] = None, label: Optional[str] = None) -> None:
-    """
-    可视化二维数组类型的结果。\n
-    Parameters:
-    ----------
-        array: ndarray
-        title: str, 标题
-        label: str, 标签
-    """
-    array_np= convert_to_nparray(array)
-    fig, ax = plt.subplots(1, 1, figsize=(7, 6), dpi=100)
-    plot = ax.imshow(array_np.squeeze(), cmap='GnBu',vmin=array_np.min(), vmax=array_np.max())
-    ax.set_title(title if title is not None else "Result")
-    ax.set_xticks([])
-    ax.set_yticks([])
-    cbar = plt.colorbar(plot, ax=ax, label=label if label is not None else "Value", pad=0.04)
-    plt.tight_layout()
-    plt.show()
-
 def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor], 
                         main_title: str = 'Tensor Visualization',
                         save_path: str = None, 
@@ -352,5 +334,20 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor],
 # ===== 以下函数已移至专用子模块，tools.py 通过 re-export 保持向后兼容 =====
 # get_video_from_imgs -> video_utils.py
 # save_tif, find_valid_file -> file_utils.py
+# 实验结果扫描/聚合 -> exp_sweep_utils.py
+
+
+# ============================================================
+# 配置路径写入工具
+# ============================================================
+
+
+def _set_by_path(ns: Namespace, dotted_path: str, value: Any) -> None:
+    """在 Namespace 中按 'a.b.c' 路径写入 value (in-place)."""
+    parts = dotted_path.split('.')
+    cur = ns
+    for p in parts[:-1]:
+        cur = getattr(cur, p)
+    setattr(cur, parts[-1], value)
 
 
