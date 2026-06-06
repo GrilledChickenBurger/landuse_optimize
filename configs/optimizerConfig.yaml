@@ -54,9 +54,9 @@ model:
     patch_dim: 16
 
 runner: # 随机优化算法通用参数
-  type: "GA" # 优化器类型，目前支持 "SA" (模拟退火)
+  type: "SA" # 优化器类型，目前支持 "SA" (模拟退火) "GA" (遗传算法)
   use_landscape: true # 是否使用景观破碎化约束
-  optimize_num: 3 # 优化样本数量
+  optimize_num: -1 # 优化样本数量
   scenario: "default" # scenario类型: ["default", "enterprise", "farmer", "tourist"], all表示所有scenario
   weight: # 不同scenario对应的权重配置
     default: { "food": 0.25, "carbon": 0.25, "water": 0.25, "culture": 0.25 }
