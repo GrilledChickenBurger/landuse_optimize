@@ -1,10 +1,12 @@
 import os
-
+import random
 from pipelines.run_runner import pipeline
 from pipelines.experiment import experiment_pipeline
 from pipelines.train import training_pipeline,valid_pipeline, get_changed_indices
 from pipelines.statistic import get_params
 from pipelines.ablation import ablation_pipeline
+from pipelines.tornado import tornado_pipeline
+from utils.exp_sweep_utils import ExperimentResultStore
 from pipelines.results_analysis import (
     comparison_pipeline,
     model_comparison_pipeline,
@@ -50,6 +52,18 @@ def run_get_changed_indices_pipeline():
     print(f"所有数据集共有 {len(changed_indices)} 个变化样本, 索引为: {changed_indices}")
 
 
+def _get_latest_experiment_dir(category: str = 'ablation') -> str:
+    """自动查找 results/<category>/ 下最新的时间戳目录."""
+    experiment_root = os.path.join("results", category)
+    if not os.path.exists(experiment_root):
+        raise FileNotFoundError(f"未找到实验结果目录: {experiment_root}")
+    dirs = [d for d in os.listdir(experiment_root) if os.path.isdir(os.path.join(experiment_root, d))]
+    if not dirs:
+        raise FileNotFoundError(f"实验结果目录为空: {experiment_root}")
+    dirs.sort(key=lambda d: os.path.getmtime(os.path.join(experiment_root, d)), reverse=True)
+    return os.path.join(experiment_root, dirs[0])
+
+
 def run_ablation_pipeline():
     """消融实验主线: 多次重复稳定性 + A/B/C 三组对比.
     mode 可选: 'stability' 只跑 A_guided; 'ablation' 跑 A/B/C 三组.
@@ -67,16 +81,123 @@ def run_ablation_pipeline():
     ablation_pipeline(
         opt_cfg_path=os.path.join("configs","optimizerConfig.yaml"),
         score_cfg_path=os.path.join("configs","score_cfg.yaml"),
-        idxs=[479],
-        mode='stability',     # 或 'stability'
+        idxs=idxs,
+        mode='stability',
         n_repeats=2,
     )
 
-def run_ablation_plots_pipeline():
-    """对消融实验结果出图: 稳定性叠图 + A/B/C 三组对比 + 箱线图 + 表格."""
-    from utils.ablation_plots import run_all_ablation_plots
-    ablation_root = os.path.join("results","ablation","20260528_120000")   # 改为实际时间戳
-    run_all_ablation_plots(ablation_root=ablation_root)
+def run_ablation_plots_pipeline(experiment_root: str = None,
+                                 sibling_experiment_roots=None):
+    """对消融实验结果出图: 稳定性叠图 + A/B/C 三组对比 + 箱线图 + 表格.
+
+    如需 SA+GA 合并出 CV 折线图/汇总表, 传 sibling_experiment_roots (GA 的结果目录列表).
+    会把 (SA)/plots/stability_runs.csv 与 (GA)/plots/stability_runs.csv 合并后,
+    输出 stability_per_sample.csv / stability_summary.csv / stability_cv_line.png.
+
+    Parameters:
+    -----------
+    experiment_root : str, optional
+        消融实验结果根目录 (主, 通常为 SA); None 则自动查找 results/ablation/ 下最新目录.
+    sibling_experiment_roots : list of str, optional
+        其他算法版本 (如 GA) 的结果目录列表, 用于合并出 CV 折线图与汇总.
+    """
+    from pipelines.ablation_plots import run_all_ablation_plots
+    if experiment_root is None:
+        experiment_root = _get_latest_experiment_dir('ablation')
+    run_all_ablation_plots(experiment_root=experiment_root,
+                            sibling_experiment_roots=sibling_experiment_roots)
+
+
+def run_tornado_pipeline(max_samples: int = None):
+    """Tornado 参数粗筛: 8 个核心参数, 1 baseline + 20 扰动 = 21 组, SA, n_repeats=2.
+
+    Parameters
+    ----------
+    max_samples : int, optional
+        最多使用的样本数; None 表示使用全部 idxs.
+    """
+    import json as _json
+
+    rep_json = "_data/representative_samples.json"
+    if os.path.exists(rep_json):
+        with open(rep_json, 'r', encoding='utf-8') as f:
+            idxs = _json.load(f)['idxs_for_pipeline']
+    else:
+        print(f"[warn] {rep_json} 不存在, 用默认 idxs")
+        idxs = [479, 596, 760, 634, 1903]
+
+    if max_samples is not None:
+        idxs = random.sample(idxs, min(max_samples, len(idxs)))
+
+    tornado_pipeline(
+        opt_cfg_path=os.path.join("configs", "optimizerConfig.yaml"),
+        score_cfg_path=os.path.join("configs", "score_cfg.yaml"),
+        idxs=idxs,
+        mode='tornado',
+        n_repeats=3,
+    )
+
+
+def run_sensitivity_pipeline(top_k_params=None, max_samples: int = None):
+    """一维敏感度线搜索: 对 tornado 筛选出的 Top-K 参数做细粒度扫描.
+
+    Parameters
+    ----------
+    top_k_params : list of dict, optional
+        待扫描的参数规格列表. 每项含 path, baseline, values, category.
+    max_samples : int, optional
+        最多使用的样本数; None 表示使用全部 idxs.
+    """
+    import json as _json
+
+    if top_k_params is None:
+        top_k_params = [
+            {'path': 'tgt_function.lambda_ES_high', 'baseline': 1000,
+             'values': [200, 400, 600, 800, 1000, 1200, 1500, 1800, 2000],
+             'category': 'score_cfg'},
+            {'path': 'cooling_rate', 'baseline': 0.9995,
+             'values': [0.9985, 0.9990, 0.9992, 0.9993, 0.9995, 0.9996, 0.9997, 0.9998, 0.9999],
+             'category': 'opt_cfg'},
+        ]
+
+    rep_json = "_data/representative_samples.json"
+    if os.path.exists(rep_json):
+        with open(rep_json, 'r', encoding='utf-8') as f:
+            idxs = _json.load(f)['idxs_for_pipeline']
+    else:
+        print(f"[warn] {rep_json} 不存在, 用默认 idxs")
+        idxs = [479, 596, 760, 634, 1903]
+
+    if max_samples is not None:
+        idxs = random.sample(idxs, min(max_samples, len(idxs)))
+
+    tornado_pipeline(
+        opt_cfg_path=os.path.join("configs", "optimizerConfig.yaml"),
+        score_cfg_path=os.path.join("configs", "score_cfg.yaml"),
+        idxs=idxs,
+        mode='sensitivity',
+        n_repeats=3,
+        top_k_params=top_k_params,
+    )
+
+
+def run_tornado_plots_pipeline(experiment_root: str = None):
+    """对 tornado / sensitivity 结果出图: tornado 图 + 一维线图.
+
+    Parameters:
+    -----------
+    experiment_root : str, optional
+        实验结果根目录; None 则自动查找 results/tornado/ 下最新目录.
+    """
+    from pipelines.tornado_plots import run_tornado_plots, plot_sensitivity_lines
+    if experiment_root is None:
+        experiment_root = _get_latest_experiment_dir('tornado')
+    run_tornado_plots(experiment_root, baseline_name='A_baseline')
+    plot_sensitivity_lines(ExperimentResultStore(experiment_root), metric='final_best')
+
+def _get_latest_ablation_dir() -> str:
+    """[deprecated] 向后兼容别名, 请使用 _get_latest_experiment_dir('ablation')."""
+    return _get_latest_experiment_dir('ablation')
 
 
 def run_results_analysis_pipeline():
@@ -95,3 +216,7 @@ if __name__ == "__main__":
     # run_experiment_pipeline()
     run_ablation_pipeline()
     # run_ablation_plots_pipeline()
+    # run_tornado_pipeline(3)
+    # run_sensitivity_pipeline()
+    # run_tornado_plots_pipeline()
+    pass
