@@ -392,9 +392,15 @@ class SimulatedAnnealing:
         else:
             target = best * 1.05
         iter_to_95pct = int(np.argmax(score_arr <= target)) if (score_arr <= target).any() else -1
+
+        # 取最优解出现时的 ES score (已保存在 es_score_list 中), 供原始记录表使用
+        es_score = (float(self.es_score_list[self.best_score_iter])
+                    if self.es_score_list else float('nan'))
+
         conv = {
             'iter_to_95pct': iter_to_95pct,
             'final_best': best,
+            'es_score': es_score,
             'wall_time_sec': wall_time,
             'total_iter': len(score_arr),
             'guided': self.guided,
