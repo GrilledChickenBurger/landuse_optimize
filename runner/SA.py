@@ -285,7 +285,6 @@ class SimulatedAnnealing:
                                             self.ori_plan,
                                             self.info_dict,
                                             self.es_weight_dict,
-                                            cur_temp,
                                             self.use_landscape,
                                             score_cfg=self.score_cfg,
                                             change_scale_n=self.pred_diff_pixelnum)

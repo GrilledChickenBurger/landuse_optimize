@@ -17,7 +17,6 @@ def cal_tgt_function(cur_plan: torch.Tensor,
                     info_dict: Dict[str, Any],
                     es_weight_dict: Dict[str, float],
                     use_landscape: bool = False,
-                    T_ratio: float = 0.0,
                     score_cfg: Optional[Namespace] = None,
                     change_scale_n: Optional[int] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, float], float]:
     """
