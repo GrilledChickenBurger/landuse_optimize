@@ -57,6 +57,8 @@ dataset = get_dataset("statistic", config)          # 统计数据
 
 `BaseDataset` 的核心逻辑非常简单：子类负责调用加载函数填充 `self.xf_pack_list`（数据包列表），基类负责 `__len__` 和 `__getitem__`。三种 Dataset 的加载逻辑分别在 `training_dataloader.py` 和 `optimize_dataloader.py` 中实现。
 
+此外，`create_dataset.py` 提供数据集构建辅助函数：`create_maxent_dataset`（构建 MaxEnt 文化服务训练数据）、`create_SA_dataset`（构建 SA 优化评估数据）和 `split_SA_dataset`（数据拆分）。
+
 ## TrainingDataset — 训练数据
 
 对应 Stage-1：训练变化检测模型。

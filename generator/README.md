@@ -67,7 +67,7 @@ SA 每次迭代调用 `generate_new_plan` 做一步扰动。文件：`sa_generat
 
 ```python
 def generate_new_plan(cur_plan, ori_plan, T_ratio, noimprove_step,
-                      scale_minmax_dict, lu_labels, cls_restrict, hard_restrict)
+                      scale_minmax_dict, lu_labels, cls_restrict: torch.Tensor, hard_restrict: torch.Tensor)
     → (new_plan, d_diff)
 ```
 
@@ -91,7 +91,7 @@ def generate_new_plan(cur_plan, ori_plan, T_ratio, noimprove_step,
 
 ```python
 def area_wise_change(cur_plan, scale, scale_minmax_dict, lu_labels,
-                     cls_restrict, hard_restrict)
+                     cls_restrict: torch.Tensor, hard_restrict: torch.Tensor)
     → (new_plan, d_change_area)
 ```
 

@@ -115,14 +115,23 @@ restrict_parts = [redline_restrict]   # GA 无 lu_zero_restrict
 hard_restrict = redline
 ```
 
-### 4.3 pred_diff_pixelnum
+### 4.3 change_target（消融实验 C 组关键）
+
+```python
+# 默认为 pred_diff；若提供 random_restrict_mask 则使用 mask（实验 C）
+self.change_target = self.random_restrict_mask if self.random_restrict_mask is not None else self.pred_diff
+# → 传给 cal_tgt_function 作为第3个位置参数（pred_diff 形参）
+# C 组：随机连通区域替代模型预测，测试空间引导的有效性
+```
+
+### 4.4 pred_diff_pixelnum
 
 ```python
 self.pred_diff_pixelnum = count_nonzero(hard_restrict AND pred_diff)
 # → 用于 λ 调度和 scale_minmax 计算
 ```
 
-### 4.4 scale_minmax_dict
+### 4.5 scale_minmax_dict
 
 ```python
 self.scale_minmax_dict = get_scale_minmax_dict(pred_diff_pixelnum)
@@ -131,7 +140,7 @@ self.scale_minmax_dict = get_scale_minmax_dict(pred_diff_pixelnum)
 # large: [0.5n, n]
 ```
 
-### 4.5 info_dict 构造
+### 4.6 info_dict 构造
 
 ```python
 self.info_dict = get_info_dict(ori_plan, pred_diff, data_dict, ...)
@@ -217,7 +226,7 @@ def cal_tgt_function(cur_plan, cur_diff, pred_diff, ori_plan, info_dict,
     #   → 连通区域到 pred_diff 的距离变换 + inside_reward
 
     # 第 2 项: es_score
-    es_ori_dict, es_rel_dict, es_score = cal_es_score(cur_plan, info_dict, es_weight_dict)
+    es_ori_dict, es_rel_dict, es_score = cal_es_score(cur_plan, info_dict, es_weight_dict)  # 注意：cal_es_score 的形参名为 weight_dict
     #   → food + carbon + water + culture 的加权归一化
 
     # 第 3 项: landscape_score
@@ -270,7 +279,7 @@ save_plan_and_get_performance(
 ```
 results/{SA|GA}/{timestamp}/{scenario}/
   └── {idx_label}/
-      ├── best_plan.npy           # 最优 LU 方案 (128, 128)
+      ├── best_plan.TIF           # 最优 LU 方案 (128, 128)
       ├── performance.json        # 性能指标
       ├── convergence.json        # 收敛信息
       ├── total_score_list.npy    # 每步目标函数值序列

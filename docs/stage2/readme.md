@@ -24,7 +24,7 @@
 runner:
   type: "SA"              # "SA" 或 "GA"
   use_landscape: true     # 是否启用景观破碎化约束
-  optimize_num: 3         # 优化样本数量（-1 表示全部）
+  optimize_num: -1        # 优化样本数量（-1 表示全部，正数如 3 表示限制数量）
   scenario: "default"     # 情景: default|enterprise|farmer|tourist|all
   weight:
     default: {food: 0.25, carbon: 0.25, water: 0.25, culture: 0.25}

@@ -5,6 +5,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **代码生成规范**：若需要生成或修改代码，请先查阅 `docs/coding-standards.md`，确保新增代码位于正确层次、优先复用已有工具、数据记录字段与 `docs/ablation/字段标准.md` 保持一致。
+
 ## 项目概述
 
 土地利用（LU）优化系统，分两阶段工作：

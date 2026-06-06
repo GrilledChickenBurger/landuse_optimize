@@ -126,8 +126,8 @@ Loss = 0.5 × Focal_loss + 0.5 × DICE_loss
 | Recall (PA) | 召回率 |
 | F1 | F1 分数 |
 | IoU | 交并比 |
-| Kappa | Kappa 系数 |
-| FOM | Figure of Merit |
+
+> 注：Kappa 和 FOM 仅在 `utils/performance.py` 中用于后处理评估，不在训练阶段的 `MetricsMeter` 中计算。
 
 ---
 
