@@ -27,6 +27,10 @@ def training_pipeline(config_path: str, checkpoint_path: str = None) -> None:
     ----------
         config_path: str 配置文件路径
         checkpoint_path: str 断点续训的checkpoint文件路径，可选
+
+    Returns:
+    --------
+        None
     """
     print("\n================= 开始训练模型... =================")
     
@@ -235,6 +239,11 @@ def valid_pipeline(config_path: str, model_checkpoint_path: str,
         model_checkpoint_path: str 模型checkpoint文件路径
         idxs: List[int] 待验证样本索引列表，可选
         datasets: List[str] 要验证的数据集列表，可选，默认为['val']，可包含['train', 'val']
+        only_changed: bool 是否只验证发生变化的样本
+
+    Returns:
+    --------
+        None
     """
     print("\n================= 开始验证模型... =================")
     # 1. 加载配置
@@ -370,8 +379,8 @@ def get_changed_indices(config_path: str, datasets: List[str] = ['train', 'val']
             # 样本格式: [factors, srcLU, diff, idx_label, changed_flag]
             changed_flag = sample[4]  # 第5个元素是变化标志
             if changed_flag == 1:  # 1表示发生变化
-                idx = sample[3].split('_')[1]
-                changed_indices.append(idx)
+                idx = sample[3].split('_')[1] if '_' in str(sample[3]) else str(sample[3])
+                changed_indices.append(int(idx))
         
         print(f"数据集 {dataset_split} 中共有 {len(changed_indices)} 个变化样本")
     

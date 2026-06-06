@@ -98,6 +98,10 @@ def experiment_pipeline(config_path: str,
         是否已处理过数据，默认False
     processed_timestamp : str, optional
         已处理数据的时间戳，默认None
+
+    Returns:
+    --------
+    None
     """
     # 检查参数
     if is_processed and not processed_timestamp:
@@ -193,7 +197,8 @@ def experiment_pipeline(config_path: str,
                 continue
 
             # 若给定待优化索引，跳过非待优化样本，否则默认优化所有样本
-            if idxs and len(idxs)>0 and index.split('_')[1] not in [str(idx) for idx in idxs]:
+            idx_part = index.split('_')[1] if '_' in index else index
+            if idxs and len(idxs)>0 and idx_part not in [str(idx) for idx in idxs]:
                 continue
             
             # 处理批次数据
