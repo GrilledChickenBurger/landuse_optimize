@@ -44,6 +44,9 @@ _DEFAULT_SCORE_CFG_DICT = {
         "guided": True,
         "disable_change_score": False,
         "disable_early_stop": False,
+        "quantity_penalty_C": 400000,
+        "quantity_penalty_delta": 0.1,
+        "quantity_penalty_power": 2,
     },
 }
 
