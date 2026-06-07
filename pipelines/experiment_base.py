@@ -149,26 +149,6 @@ class BaseSweepPipeline:
                 return True
         return False
 
-    def _scan_processed_samples(self, exp_save_folder: str) -> set:
-        """断点续传：扫描已完成的样本."""
-        processed_samples = set()
-        if not self.is_processed:
-            return processed_samples
-        if not os.path.isdir(exp_save_folder):
-            return processed_samples
-        for entry in os.listdir(exp_save_folder):
-            entry_path = os.path.join(exp_save_folder, entry)
-            if not os.path.isdir(entry_path):
-                continue
-            if entry.startswith('run_'):
-                processed_samples.update(
-                    d for d in os.listdir(entry_path)
-                    if os.path.isdir(os.path.join(entry_path, d))
-                )
-            else:
-                processed_samples.add(entry)
-        return processed_samples
-
     def _write_manifest(self, exp_save_folder: str, exp: Dict[str, Any]) -> None:
         manifest = {
             'name': exp['name'],
@@ -204,11 +184,10 @@ class BaseSweepPipeline:
         matrix = self.build_matrix()
         print(f"  实验数量: {len(matrix)} (mode={self.mode}, n_repeats={self.n_repeats})")
 
-        completed_exps = set(os.listdir(self.root_save)) if self.is_processed else set()
-
         for exp in matrix:
             exp_name = exp['name']
-            if self.is_processed and exp_name in completed_exps:
+            exp_save_folder = os.path.join(self.root_save, exp_name)
+            if self.is_processed and os.path.exists(os.path.join(exp_save_folder, 'manifest.json')):
                 print(f"\n实验【{exp_name}】已完成, 跳过")
                 continue
 
@@ -236,10 +215,7 @@ class BaseSweepPipeline:
                 except AttributeError:
                     print(f"    [warn] opt_overrides '{dotted_path}' 在 {self.runner_config.type} 配置中不存在, 跳过")
 
-            exp_save_folder = os.path.join(self.root_save, exp_name)
             ensure_folder(exp_save_folder)
-
-            processed_samples = self._scan_processed_samples(exp_save_folder)
 
             for i, data_pack in enumerate(self.dataloader):
                 index = data_pack[5][0]
