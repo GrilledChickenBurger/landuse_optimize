@@ -3,7 +3,7 @@ device:
   use_gpu: true
 
 data:
-  root: "_data\\optimize_data"
+  root: "_data/optimize_data"
   shape: [1, 128, 128] # [通道数, 高度, 宽度]
   factor_list: ["DEM", "DL", "GDP", "RK"] # 驱动因子列表
   es_list: ["RAIN", "NJW", "ZSL", "PODU", "WATER", "CITY", "GD"] # 生态系统服务数据列表
@@ -31,13 +31,13 @@ data:
       65,
       66,
     ]
-  maxent_model_path: "checkpoints\\maxent-model_sklearn_{year}.ela" # maxent模型路径
+  maxent_model_path: "checkpoints/maxent-model_sklearn_{year}.ela" # maxent模型路径
   shuffle: false # 是否打乱数据
   batch_size: 1 # 批次大小
 
 model:
   type: "attunet" # 模型类型，目前支持 "attunet, unet, segformer"
-  model_path: "checkpoints\\attunet_best_260212.pth" # 预训练模型路径
+  model_path: "checkpoints/attunet_best_260212.pth" # 预训练模型路径
   segformer:
     dims: [32, 64, 160, 256]
     heads: [1, 2, 5, 8]
@@ -65,9 +65,9 @@ runner: # 随机优化算法通用参数
     # tourist: {'food':0.0, 'carbon':0.1, 'water':0.2, 'culture':0.7}
     tourist: { "food": 0.0, "carbon": 0.0, "water": 0.0, "culture": 1.0 }
   common_params:
-    carbon_pool_path: "libs\\carbon_pool.csv" # 碳库数据路径
-    maxent_model_path: "checkpoints\\maxent-model_sklearn_{year}.ela" # maxent模型路径, 需与data.maxent_model_path一致
-    frg_model_path: "libs\\frg_model.fca" # 破碎化模型路径
+    carbon_pool_path: "libs/carbon_pool.csv" # 碳库数据路径
+    maxent_model_path: "checkpoints/maxent-model_sklearn_{year}.ela" # maxent模型路径, 需与data.maxent_model_path一致
+    frg_model_path: "libs/frg_model.fca" # 破碎化模型路径
     maxent_list: ["CITY", "DL", "LU", "PODU", "WATER"] # Maxent模型输入变量
 
 SA: # 模拟退火参数
@@ -83,7 +83,7 @@ SA: # 模拟退火参数
   # ES_1: ['RAIN','NJW','PODU','WATER','CITY','GD']
   # ES_2: ['RAIN','ZSL']
   performance: true # 是否记录性能指标
-  save_path: "results\\SA" # 结果保存目录
+  save_path: "results/SA" # 结果保存目录
 
 GA:
   ori_pop_size: 30 # 初始种群大小
@@ -98,7 +98,7 @@ GA:
   print_frequency: 10 # 每n步打印一次输出
   visualize_frequency: 200 # 每n步可视化一次输出
   performance: true # 是否记录性能指标
-  save_path: "results\\GA" # 结果保存目录
+  save_path: "results/GA" # 结果保存目录
   strategy:
     "parent_pool": "elite"
     "elite_ratio_for_pool": 0.2 # 父本来源的前20%
@@ -109,7 +109,7 @@ GA:
 
 output:
   save_result: false # 是否保存优化结果
-  save_path: "results\\optimize_data" # 结果保存目录
+  save_path: "results/optimize_data" # 结果保存目录
 
 
 # # 实验配置列表

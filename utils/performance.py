@@ -315,7 +315,8 @@ def frg_cmd(model_path, batchcsv_path, output_folder):
     frg_flag = 0
     while frg_flag != 1:
         frg_path=os.getenv('frg_cmd')
-        command = f'"{frg_path}\\frg_cmd" -m {model_path} -b {batchcsv_path} -o {output_path}'
+        frg_executable = os.path.join(frg_path, 'frg_cmd')
+        command = f'"{frg_executable}" -m {model_path} -b {batchcsv_path} -o {output_path}'
         os.system(command) # 命令行执行
         # subprocess.call(command, shell=True)
 
@@ -351,9 +352,9 @@ def get_cls_landscape_index(frg_output_folder, index_list):
     cls_file_path = [os.path.join(frg_output_folder, f) for f in os.listdir(frg_output_folder) if f.endswith(".class")]
     assert len(cls_file_path)==1
     # 由于fragstats的后缀默认是.class, 因此需要重命名
-    old_name = cls_file_path[0].split("\\")[-1]
+    old_name = os.path.basename(cls_file_path[0])
     new_name = "_".join(old_name.split(".")) + ".csv"
-    cls_new_path = f"{frg_output_folder}\\{new_name}"
+    cls_new_path = os.path.join(frg_output_folder, new_name)
     if not os.path.exists(cls_new_path):
         shutil.copy(cls_file_path[0], cls_new_path)
         remove_csv_space(cls_new_path)
@@ -363,7 +364,7 @@ def get_cls_landscape_index(frg_output_folder, index_list):
         csv_reader = csv.DictReader(csv_file)
         for row in csv_reader:
             # 使用 LID 作为字典的键
-            plan_name = row['LID'].split("\\")[-1].split('.')[0]
+            plan_name = os.path.basename(row['LID']).split('.')[0]
             if plan_name not in cls_results:
                 cls_results[plan_name]={}
             for idx in index_list:
@@ -377,9 +378,9 @@ def get_land_landscape_index(result_folder, index_list):
     cls_file_path = [os.path.join(result_folder, f) for f in os.listdir(result_folder) if f.endswith(".land")]
     assert len(cls_file_path)==1
     # 由于fragstats的后缀默认是.class, 因此需要重命名
-    old_name = cls_file_path[0].split("\\")[-1]
+    old_name = os.path.basename(cls_file_path[0])
     new_name = "_".join(old_name.split(".")) + ".csv"
-    cls_new_path = f"{result_folder}\\{new_name}"
+    cls_new_path = os.path.join(result_folder, new_name)
     if not os.path.exists(cls_new_path):
         shutil.copy(cls_file_path[0], cls_new_path)
         remove_csv_space(cls_new_path)
@@ -389,7 +390,7 @@ def get_land_landscape_index(result_folder, index_list):
         csv_reader = csv.DictReader(csv_file)
         for row in csv_reader:
             # 使用 LID 作为字典的键
-            plan_name = row['LID'].split("\\")[-1].split('.')[0]
+            plan_name = os.path.basename(row['LID']).split('.')[0]
             if plan_name not in land_results:
                 land_results[plan_name]={}
             for idx in index_list:              
@@ -448,12 +449,16 @@ def write_performance_score(best_plan: torch.Tensor,
     # 3. landscape
     land_dict = {}
     if landscape and frg_model_path is not None:
-        cls_list = ['LPI','LSI','AI','ED']
-        land_list = ['LPI','LSI','AI','ED','SHEI','SHDI','CONTAG']
-        create_frg_csv(src_folder, f'{tmp_folder}\\batch.csv')
-        frg_cmd(frg_model_path, f'{tmp_folder}\\batch.csv', tmp_folder)
-        # cls_dict = get_cls_landscape_index(output_folder, cls_list)
-        land_dict = get_land_landscape_index(tmp_folder, land_list)
+        try:
+            cls_list = ['LPI','LSI','AI','ED']
+            land_list = ['LPI','LSI','AI','ED','SHEI','SHDI','CONTAG']
+            batch_csv_path = os.path.join(tmp_folder, 'batch.csv')
+            create_frg_csv(src_folder, batch_csv_path)
+            frg_cmd(frg_model_path, batch_csv_path, tmp_folder)
+            # cls_dict = get_cls_landscape_index(output_folder, cls_list)
+            land_dict = get_land_landscape_index(tmp_folder, land_list)
+        except Exception as e:
+            print(f"  [warn] landscape 评估失败 (fragstats 不可用?), 跳过: {e}")
     # performance_score['Landscape']['class'] = cls_dict
     performance_score['Landscape']['land'] = land_dict
     
@@ -513,8 +518,9 @@ def only_landscape(src_folder: str, tmp_folder: str,
     """
     cls_list = ['LPI','LSI','AI','ED']
     land_list = ['LPI','LSI','AI','ED','SHEI','SHDI','CONTAG']
-    create_frg_csv(src_folder, f'{tmp_folder}\\batch.csv')
-    frg_cmd(frg_model_path, f'{tmp_folder}\\batch.csv', tmp_folder)
+    batch_csv_path = os.path.join(tmp_folder, 'batch.csv')
+    create_frg_csv(src_folder, batch_csv_path)
+    frg_cmd(frg_model_path, batch_csv_path, tmp_folder)
     # cls_dict = get_cls_landscape_index(output_folder, cls_list)
     land_dict = get_land_landscape_index(tmp_folder, land_list)
     return land_dict

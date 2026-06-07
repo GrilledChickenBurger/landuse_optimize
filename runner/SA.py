@@ -11,7 +11,6 @@ from libs.const import *
 import libs.const as _libs_const
 from generator.sa_generator import generate_new_plan
 from calculator.tgt_function_cal import cal_tgt_function
-from utils.performance import write_performance_score
 import utils.calculator_utils as cUtils
 import utils.runner_utils as rUtils
 import utils.dataset_utils as dUtils

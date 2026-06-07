@@ -276,8 +276,10 @@ FACTOR_PARAMS_DICT={
 # 原始数据根目录, 保存着tif文件配套的tfw等文件
 # 若需要frg模型评估方案, 则待评估方案需要从此处复制tfw文件
 # 可通过环境变量 LU_OPTIM_DATA_ROOT 覆盖
+import platform as _platform
+_WINDOWS_DEFAULT_ROOT = 'D:\\_programming\\_LAB_ASSIGMENTS\\AAAAA栅格分割'
 RAW_DATA_ROOT = os.environ.get('LU_OPTIM_DATA_ROOT',
-                               'D:\\_programming\\_LAB_ASSIGMENTS\\AAAAA栅格分割')
+    _WINDOWS_DEFAULT_ROOT if _platform.system() == 'Windows' else None)
 
 # 默认驱动因子列表 (pred_diff 计算中 normalization 使用的条件因子)
 DEFAULT_CONDITION_LIST = ["DEM", "DL", "GDP", "RK"]
