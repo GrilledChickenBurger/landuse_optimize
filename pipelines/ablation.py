@@ -43,7 +43,7 @@ def build_experiment_matrix(mode: str = 'ablation', n_repeats: int = 1) -> List[
         matrix.append({
             'name': 'A_guided',
             'overrides': {},
-            'flags': {'guided': True, 'disable_early_stop': True},
+            'flags': {'guided': True, 'disable_early_stop': False},
             'n_repeats': n_repeats, 'group': 'A',
         })
     elif mode == 'ablation':
