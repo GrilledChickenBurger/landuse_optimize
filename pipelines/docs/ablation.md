@@ -75,9 +75,9 @@ build_experiment_matrix(mode='ablation', n_repeats=5)
 
 | 组 | name | overrides | flags | n_repeats | group |
 |---|------|-----------|-------|-----------|-------|
-| A | `A_guided` | `{}` | `guided=True`, `disable_early_stop=True`, `skip_threshold_check=True` | 5 | A |
-| B | `B_unguided` | `{'ablation.disable_change_score': True}` | `guided=False`, `disable_early_stop=True`, `skip_threshold_check=True` | 5 | B |
-| C | `C_random` | `{}` | `guided=False`, `disable_early_stop=True`, `skip_threshold_check=True` | 5 | C |
+| A | `A_guided` | `{}` | `guided=True`, `disable_early_stop=True` | 5 | A |
+| B | `B_unguided` | `{'ablation.disable_change_score': True}` | `guided=False`, `disable_early_stop=True` | 5 | B |
+| C | `C_random` | `{}` | `guided=False`, `disable_early_stop=True` | 5 | C |
 
 ### 3.1 A_guided — 完整方法（基线）
 

@@ -36,7 +36,6 @@ class SimulatedAnnealing:
             *,
             guided: bool = True,
             disable_early_stop: bool = False,
-            skip_threshold_check: bool = False,
             score_cfg: Optional[Namespace] = None,
             random_restrict_mask: Optional[torch.Tensor] = None,
             ):
@@ -81,7 +80,6 @@ class SimulatedAnnealing:
         # ablation 开关
         self.guided = guided
         self.disable_early_stop = disable_early_stop
-        self.skip_threshold_check = skip_threshold_check
         self.score_cfg = score_cfg if score_cfg is not None else tUtils.get_default_score_cfg()
         self.random_restrict_mask = random_restrict_mask
 
@@ -130,13 +128,17 @@ class SimulatedAnnealing:
         self.cls_restrict = rUtils.get_cls_restrict_area(self.ori_plan)
 
         # C 组: change_target 用 random_mask 替代 pred_diff (目标函数 P_change 项对齐随机约束位置)
-        # 注意: 必须先于 pred_diff_pixelnum 赋值, 因为后者依赖 self.change_target
         if self.random_restrict_mask is not None:
             self.change_target = self.random_restrict_mask.to(self.pred_diff.dtype)
         else:
             self.change_target = self.pred_diff
 
-        self.pred_diff_pixelnum = torch.count_nonzero(torch.logical_and(self.hard_restrict, self.change_target)).item()
+        # pred_diff_pixelnum: 模型预测在硬性限制 RA(redline ∧ lu≠0) 内的变化像素数.
+        # 与 hard_restrict/change_target 解耦, 确保 A/B/C 三组取值一致 (B 缺 grid_restrict,
+        # C 用 random_mask 替换 change_target, 都不影响此处计数).
+        ra_mask = torch.logical_and(redline_restrict, lu_zero_restrict)
+        self.pred_diff_pixelnum = torch.count_nonzero(
+            torch.logical_and(ra_mask, self.pred_diff)).item()
         self.scale_minmax_dict = rUtils.get_scale_minmax_dict(self.pred_diff_pixelnum)
 
         # 目标函数计算相关信息: distance map 基于 change_target 生成
@@ -245,7 +247,7 @@ class SimulatedAnnealing:
         torch.Tensor
             优化后的最佳土地利用方案
         """
-        if not self.skip_threshold_check and self.pred_diff_pixelnum < _libs_const.PIXEL_NUM_THRESHOLD_ISCHANGE:
+        if self.pred_diff_pixelnum < _libs_const.PIXEL_NUM_THRESHOLD_ISCHANGE:
             print("预测不发生改变，不进入模拟退火过程。")
             return self.ori_plan
 

@@ -190,7 +190,6 @@ create_runner(
     use_landscape=False,
     guided=True,
     disable_early_stop=False,
-    skip_threshold_check=False,
     score_cfg=score_cfg,             # Namespace
     random_restrict_mask=None,       # Optional[torch.Tensor]
 )
@@ -367,3 +366,55 @@ def build_stability_table(ablation_root: str, exp_name: str, save_path: Optional
 - [ ] **文档同步**：是否在 `pipelines/README.md` 或对应 `pipelines/docs/` 文件中补充了说明？
 - [ ] **纯函数检查**：`calculator/` 下的新函数是否无副作用、无文件 I/O？
 - [ ] **类型检查**：`data_pack` 是否按索引位置解包（而非字典键名）？
+
+---
+
+## 10. Git 远程推送与代理
+
+### 10.1 代理配置
+
+本机 Git 配置了 HTTP/HTTPS 代理 `127.0.0.1:7890`（Clash/机场类工具）：
+
+```bash
+git config --global http.proxy  http://127.0.0.1:7890
+git config --global https.proxy http://127.0.0.1:7890
+```
+
+### 10.2 常见问题：代理不可用导致推送失败
+
+如果代理工具未启动，`git push`/`git pull`/`git fetch` 会报错：
+
+```
+fatal: unable to access 'https://github.com/...': 
+Failed to connect to 127.0.0.1 port 7890 after 2059 ms: Couldn't connect to server
+```
+
+**排查步骤：**
+
+```bash
+# 1. 确认代理是否配置
+git config --global --get http.proxy
+git config --global --get https.proxy
+
+# 2. 确认代理是否在运行
+curl -x http://127.0.0.1:7890 -I https://github.com 2>&1 | head -3
+```
+
+### 10.3 临时绕过代理推送
+
+如果代理暂不可用但需要立即推送，可以临时取消代理，推送后恢复：
+
+```bash
+# 取消代理
+git config --global --unset http.proxy
+git config --global --unset https.proxy
+
+# 执行推送
+git push origin master
+
+# 推送完成后立即恢复代理
+git config --global http.proxy http://127.0.0.1:7890
+git config --global https.proxy http://127.0.0.1:7890
+```
+
+> ⚠️ **注意**：推送完成后务必恢复代理设置，否则后续 `git fetch`/`git pull` 等操作会因网络不通而失败。

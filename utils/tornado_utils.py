@@ -41,7 +41,7 @@ def build_experiment_matrix(mode: str = 'tornado', n_repeats: int = 1,
             'name': 'A_baseline',
             'overrides': {},
             'opt_overrides': {},
-            'flags': {'guided': True, 'disable_early_stop': False, 'skip_threshold_check': False},
+            'flags': {'guided': True, 'disable_early_stop': False},
             'n_repeats': n_repeats, 'group': 'A',
         })
         for dotted_path, baseline, values, category in _TORNADO_PARAMS:
@@ -57,7 +57,7 @@ def build_experiment_matrix(mode: str = 'tornado', n_repeats: int = 1,
                     'name': exp_name,
                     'overrides': overrides,
                     'opt_overrides': opt_overrides,
-                    'flags': {'guided': True, 'disable_early_stop': False, 'skip_threshold_check': False},
+                    'flags': {'guided': True, 'disable_early_stop': False},
                     'n_repeats': n_repeats, 'group': 'B',
                 })
     elif mode == 'sensitivity':
@@ -79,7 +79,7 @@ def build_experiment_matrix(mode: str = 'tornado', n_repeats: int = 1,
                     'name': exp_name,
                     'overrides': overrides,
                     'opt_overrides': opt_overrides,
-                    'flags': {'guided': True, 'disable_early_stop': False, 'skip_threshold_check': False},
+                    'flags': {'guided': True, 'disable_early_stop': False},
                     'n_repeats': n_repeats, 'group': 'S',
                 })
     else:

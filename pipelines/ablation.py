@@ -50,19 +50,19 @@ def build_experiment_matrix(mode: str = 'ablation', n_repeats: int = 1) -> List[
         matrix.append({
             'name': 'A_guided',
             'overrides': {},
-            'flags': {'guided': True, 'disable_early_stop': True, 'skip_threshold_check': True},
+            'flags': {'guided': True, 'disable_early_stop': True},
             'n_repeats': n_repeats, 'group': 'A',
         })
         matrix.append({
             'name': 'B_unguided',
             'overrides': {'ablation.disable_change_score': True},
-            'flags': {'guided': False, 'disable_early_stop': True, 'skip_threshold_check': True},
+            'flags': {'guided': False, 'disable_early_stop': True},
             'n_repeats': n_repeats, 'group': 'B',
         })
         matrix.append({
             'name': 'C_random',
             'overrides': {},
-            'flags': {'guided': False, 'disable_early_stop': True, 'skip_threshold_check': True},
+            'flags': {'guided': False, 'disable_early_stop': True},
             'n_repeats': n_repeats, 'group': 'C',
         })
     else:
@@ -126,6 +126,14 @@ class AblationPipeline(BaseSweepPipeline):
 
         base_seed = (abs(hash(index)) & 0xFFFFFFFF)
         random_mask = make_random_connected_mask(pred_diff, base_hard, seed=base_seed + r)
+
+        # 对齐校验: count(RA ∧ random_mask) 应等于 count(RA ∧ pred_diff), 否则 C 与 A/B 不可比.
+        # RA 内空间不足时 make_random_connected_mask 会 break 提前结束, 触发该警告.
+        ra_pred = torch.logical_and(base_hard, pred_diff.bool()).sum().item()
+        ra_rand = torch.logical_and(base_hard, random_mask.bool()).sum().item()
+        if ra_pred != ra_rand:
+            print(f"  [warn] {index} run {r}: C 组 random_mask 像素数对齐失败 "
+                  f"(RA∧pred={ra_pred}, RA∧random={ra_rand}); 该样本 C 与 A/B 不可比")
 
         # 保存 mask 供后续分析
         save_path = os.path.join(self.root_save, exp['name'], f'run_{r}', index)

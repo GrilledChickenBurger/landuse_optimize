@@ -75,7 +75,7 @@ build_experiment_matrix(mode='tornado', n_repeats=2)
 
 | name | overrides | opt_overrides | flags | group |
 |------|-----------|---------------|-------|-------|
-| `A_baseline` | `{}` | `{}` | `guided=True`, `disable_early_stop=False`, `skip_threshold_check=False` | A |
+| `A_baseline` | `{}` | `{}` | `guided=True`, `disable_early_stop=False` | A |
 
 ### 3.2 参数扰动实验
 

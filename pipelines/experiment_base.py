@@ -260,7 +260,6 @@ class BaseSweepPipeline:
                         use_landscape=self.use_landscape,
                         guided=exp.get('flags', {}).get('guided', True),
                         disable_early_stop=exp.get('flags', {}).get('disable_early_stop', False),
-                        skip_threshold_check=exp.get('flags', {}).get('skip_threshold_check', False),
                         score_cfg=score_cfg,
                         random_restrict_mask=random_mask,
                     )
