@@ -3,39 +3,39 @@
 # ablation pipeline 通过覆写本文件字段来扫描敏感性
 
 tgt_function:
-  lambda_ES_high: 1000     # pred_diff 像素数 > pixel_high 时的 λ_ES
-  lambda_ES_low: 5000      # pred_diff 像素数 < pixel_low 时的 λ_ES
-  lambda_LS_high: 5        # pred_diff 像素数 > pixel_high 时的 λ_LS
-  lambda_LS_low: 1         # pred_diff 像素数 < pixel_low 时的 λ_LS
+  lambda_ES_high: 1000 # pred_diff 像素数 > pixel_high 时的 λ_ES
+  lambda_ES_low: 5000 # pred_diff 像素数 < pixel_low 时的 λ_ES
+  lambda_LS_high: 5 # pred_diff 像素数 > pixel_high 时的 λ_LS
+  lambda_LS_low: 1 # pred_diff 像素数 < pixel_low 时的 λ_LS
   pixel_high: 6000
   pixel_low: 300
 
 change_score:
-  inside_reward_coef: 10   # cal_change_score.py:66,69 的 *10 奖励系数
+  inside_reward_coef: 10 # cal_change_score.py:66,69 的 *10 奖励系数
 
 runner_utils:
-  sigmoid_threshold: 0.5   # get_pred_diff 二值化阈值
-  grid_num: 4              # get_grid_restrict_area 的网格划分数
+  sigmoid_threshold: 0.5 # get_pred_diff 二值化阈值
+  grid_num: 4 # get_grid_restrict_area 的网格划分数
 
 landscape:
-  pure_base: 0.3           # cal_landscape_score.py:93 的 (0.3 + change_ratio * 0.2)
+  pure_base: 0.3 # cal_landscape_score.py:93 的 (0.3 + change_ratio * 0.2)
   pure_change: 0.2
 
 const:
-  pixel_num_threshold_ischange: 30  # libs/const.py 的 PIXEL_NUM_THRESHOLD_ISCHANGE
-  water_supply_param:               # libs/const.py 的 WATER_SUPPLY_PARAM (LU 二级类粒度)
+  pixel_num_threshold_ischange: 30 # libs/const.py 的 PIXEL_NUM_THRESHOLD_ISCHANGE
+  water_supply_param: # libs/const.py 的 WATER_SUPPLY_PARAM (LU 二级类粒度)
     # 耕地
-    11: 0.3470     # 水田
-    12: 0.4969     # 旱地
+    11: 0.3470 # 水田
+    12: 0.4969 # 旱地
     # 林地
-    21: 0.02038    # 有林地
-    22: 0.0420     # 灌木林
-    23: 0.1920     # 疏林地
-    24: 0.1222     # 其他林地
+    21: 0.02038 # 有林地
+    22: 0.0420 # 灌木林
+    23: 0.1920 # 疏林地
+    24: 0.1222 # 其他林地
     # 草地
-    31: 0.0478     # 高覆盖度草地
-    32: 0.08785    # 中覆盖度草地
-    33: 0.1827     # 低覆盖度草地
+    31: 0.0478 # 高覆盖度草地
+    32: 0.08785 # 中覆盖度草地
+    33: 0.1827 # 低覆盖度草地
     # 水域 (按一级类 4 -> 0 兜底)
     41: 0
     42: 0
@@ -57,9 +57,9 @@ const:
     67: 1
 
 ablation:
-  guided: true             # 无引导时设 false: 跳过 pred_grid_restrict
-  disable_change_score: false  # 无引导时设 true: tgt_func 屏蔽 change 项
-  disable_early_stop: false    # 实验 A 设 true: 禁用 noimprove/beststuck 早停
-  quantity_penalty_C: 400000   # B组面积惩罚/奖励系数，与 change_score 量级对齐
-  quantity_penalty_delta: 0.1  # 软死区半宽（±10%）
-  quantity_penalty_power: 2    # 死区外惩罚幂次
+  guided: true # 无引导时设 false: 跳过 pred_grid_restrict
+  disable_change_score: false # 无引导时设 true: tgt_func 屏蔽 change 项
+  disable_early_stop: false # 实验 A 设 true: 禁用 noimprove/beststuck 早停
+  quantity_penalty_C: 10000 # B组面积惩罚/奖励系数，与 change_score 量级对齐
+  quantity_penalty_delta: 0.1 # 软死区半宽（±10%）
+  quantity_penalty_power: 2 # 死区外惩罚幂次

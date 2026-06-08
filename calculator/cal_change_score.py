@@ -23,17 +23,14 @@ def cal_quantity_value(cur_diff: torch.Tensor, target_n: int,
     cur_n = torch.count_nonzero(cur_diff).item()
     ratio = cur_n / max(target_n, 1)
     dev = abs(ratio - 1)
-    if dev <= delta:
-        score = -C * (1 - dev / delta)
-    else:
-        score = ((dev - delta) ** power) * C
+    score = ((max(0, dev - delta)) ** power) * C
     return torch.tensor(score)
 
 
 def cal_change_score(cur_diff: torch.Tensor, pred_diff: torch.Tensor, info_dict: Dict[str, Any],
                      score_cfg: Optional[Namespace] = None) -> torch.Tensor:
     """
-    计算变化得分, 表示当前更改区域到预测变化区域的距离【相对值】, 越大表示越好, 范围:[-inf, 1]\n
+    计算变化得分, 表示当前更改区域到预测变化区域的距离, 越小表示越好\n
     Parameters:
     ----------
         cur_diff: tensor, [1,1,128,128], 0-1 binary, 1 表示新方案对比原方案的变化区域,

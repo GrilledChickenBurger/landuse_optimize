@@ -40,11 +40,11 @@ def cal_tgt_function(cur_plan: torch.Tensor,
     """
     cfg = score_cfg if score_cfg is not None else get_default_score_cfg()
 
-    # 1. 计算变化得分 越大表示越好, 范围:[-inf, 1]
+    # 1. 计算变化得分 越小表示越好
     change_relative_score = cal_change_score(cur_diff, pred_diff, info_dict, score_cfg=cfg)
     # 2. 计算环境得分  越大表示越好, 范围:[0, 1]
     es_ori_score_dict, es_relative_score_dict, es_relative_score = cal_es_score(cur_plan, info_dict, es_weight_dict)
-    # 3. 计算景观格局得分
+    # 3. 计算景观格局得分 越小表示越好
     landscape_score = 0.0
     if use_landscape:
         landscape_score = cal_landscape_score(cur_plan, cur_diff, ori_plan, info_dict=info_dict, score_cfg=cfg)
