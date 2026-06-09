@@ -129,7 +129,8 @@ class AblationPipeline(BaseSweepPipeline):
 
         # 对齐校验: count(RA ∧ random_mask) 应等于 count(RA ∧ pred_diff), 否则 C 与 A/B 不可比.
         # RA 内空间不足时 make_random_connected_mask 会 break 提前结束, 触发该警告.
-        ra_pred = torch.logical_and(base_hard, pred_diff.bool()).sum().item()
+        # 注意: pred_diff 可能在 GPU, base_hard / random_mask 在 CPU, 统一到 CPU 做计数
+        ra_pred = torch.logical_and(base_hard, pred_diff.bool().cpu()).sum().item()
         ra_rand = torch.logical_and(base_hard, random_mask.bool()).sum().item()
         if ra_pred != ra_rand:
             print(f"  [warn] {index} run {r}: C 组 random_mask 像素数对齐失败 "
