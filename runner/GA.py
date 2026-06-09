@@ -780,7 +780,7 @@ class GeneticAlgorithm:
                 print(f"\nStep {gen} noimprove_step={noimprove_step} beststuck_gen={gen - self.best_score_generation}")
                 print(f"        种群avg: {pop_stat_dict['avg_fitness']:.4f}, 最差: {pop_stat_dict['worst_fitness']:.4f}")
                 print(f"        当前best: {cur_score:.4f}, 最佳best: {self.best_score:.4f}")
-                print(f"        change_score={cur_score_list[1]:.4f}, ES_score={cur_score_list[2]:.4f}, landscape_score={cur_score_list[4]:.4f}.")
+                print(f"        change_score={cur_score_list[1]:.4f}, ES_score={cur_score_list[2]:.4f}, landscape_score={cur_score_list[-1]:.4f}.")
                 
             if gen % self.visualize_frequency == 0:
                 history_save_path=os.path.join(result_folder, 'history', f'iter_{gen}.png')

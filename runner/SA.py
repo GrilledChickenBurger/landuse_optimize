@@ -331,7 +331,7 @@ class SimulatedAnnealing:
                 print(f"        温度: {cur_temp:.4f}, 当前分数={cur_score:.4f}, 最佳分数={self.best_score:.4f}")
             
             if iteration % self.visualize_frequency == 0:
-                print(f"        change_score={cur_score_list[1]:.4f}, ES_score={cur_score_list[2]:.4f}, landscape_score={cur_score_list[4]:.4f}.")
+                print(f"        change_score={cur_score_list[1]:.4f}, ES_score={cur_score_list[2]:.4f}, landscape_score={cur_score_list[-1]:.4f}.")
                 tensor_dict = {
                     'ori_plan': self.ori_plan,
                     'cur_plan': cur_plan,
