@@ -86,11 +86,11 @@ SA: # 模拟退火参数
   save_path: "results/SA" # 结果保存目录
 
 GA:
-  ori_pop_size: 30 # 初始种群大小
+  ori_pop_size: 20 # 初始种群大小
   final_pop_size: 8 # 最终种群大小
-  max_gen: 3000 # 最大迭代次数
-  max_noimprove_gen: 100 # 最大无改进迭代次数
-  max_beststuck_gen: 400 # 最优解停滞阈值
+  max_gen: 2000 # 最大迭代次数
+  max_noimprove_gen: 80 # 最大无改进迭代次数
+  max_beststuck_gen: 300 # 最优解停滞阈值
   crossover_rate: 0.8 # 交叉率
   mutation_rate: 1.0 # 变异率
   scale_ratio: [0.2, 0.5, 0.3] # 初始化种群时的尺度比例:[small,mid,large]
@@ -100,9 +100,10 @@ GA:
   performance: true # 是否记录性能指标
   save_path: "results/GA" # 结果保存目录
   strategy:
-    "parent_pool": "elite"
+    "parent_pool": "all"
     "elite_ratio_for_pool": 0.2 # 父本来源的前20%
-    "parent_selection": "roulette"
+    "parent_selection": "tournament"
+    "tournament_k": 2
     "elite_ratio": 0.1
     "non_crossover_handling": "copy"
     "elite_mutation": False
