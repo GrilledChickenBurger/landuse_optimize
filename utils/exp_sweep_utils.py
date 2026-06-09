@@ -146,6 +146,11 @@ _METRIC_KEYS_CONV = ['final_best', 'iter_to_95pct', 'wall_time_sec', 'total_iter
 _METRIC_KEYS_PERF = [
     'ES.food.best_ori_diff', 'ES.carbon.best_ori_diff',
     'ES.water.best_ori_diff', 'ES.culture.best_ori_diff',
+    'ES.food.best_tgt_diff', 'ES.carbon.best_tgt_diff',
+    'ES.water.best_tgt_diff', 'ES.culture.best_tgt_diff',
+    'Change_area.real_metrics.iou', 'Change_area.real_metrics.f1_score',
+    'Change_area.pred_metrics.iou', 'Change_area.pred_metrics.f1_score',
+    'FINAL.FOM', 'FINAL.kappa',
 ]
 
 
@@ -892,15 +897,15 @@ def _calc_metric_stats(vals, n: int, t_crit_n5: float = 2.776):
 def build_stability_per_sample_csv(runs_df,
                                    save_path: str,
                                    t_crit_n5: float = 2.776):
-    """按 (sample_id, algorithm) 聚合 runs, 对 F_final 和 Runtime 分别输出 μ/σ/CV/95%CI.
+    """按 (sample_id, algorithm) 聚合 runs, 对 F_final / ESV / Runtime 分别输出 μ/σ/CV/95%CI.
 
-    为同时量化目标函数与运行时间的稳定性, 内部复用 ``_calc_metric_stats``
-    对两列指标计算相同的统计量, 输出列名用 F_/RT_ 前缀区分.
+    为同时量化目标函数、解质量与运行时间的稳定性, 内部复用 ``_calc_metric_stats``
+    对三列指标计算相同的统计量, 输出列名用 F_/ES_/RT_ 前缀区分.
 
     Parameters
     ----------
     runs_df : pd.DataFrame
-        原始 runs.csv, 至少含 sample_id / algorithm / F_final / Runtime 列.
+        原始 runs.csv, 至少含 sample_id / algorithm / F_final / ESV / Runtime 列.
     save_path : str
         输出 CSV 路径.
     t_crit_n5 : float
@@ -912,6 +917,7 @@ def build_stability_per_sample_csv(runs_df,
         每行一个 (sample_id, algorithm) 组合, 列:
         sample_id, n_pred, level, algorithm, n_runs,
         F_mu, F_sigma, F_cv_pct, F_ci95_half, F_ci95_width_ratio_pct,
+        ES_mu, ES_sigma, ES_cv_pct, ES_ci95_half, ES_ci95_width_ratio_pct,
         RT_mu, RT_sigma, RT_cv_pct, RT_ci95_half, RT_ci95_width_ratio_pct.
     """
     import pandas as pd
@@ -921,6 +927,7 @@ def build_stability_per_sample_csv(runs_df,
         print(f"  [per_sample] runs_df 为空, 跳过")
         return pd.DataFrame()
 
+    nan = float('nan')
     rows = []
     grouped = runs_df.groupby(['sample_id', 'algorithm'], sort=False)
     for (sample_id, alg), g in grouped:
@@ -930,6 +937,20 @@ def build_stability_per_sample_csv(runs_df,
 
         f_mu, f_sigma, f_cv, f_ci_half, f_ci_ratio = _calc_metric_stats(f_vals, n, t_crit_n5)
         rt_mu, rt_sigma, rt_cv, rt_ci_half, rt_ci_ratio = _calc_metric_stats(rt_vals, n, t_crit_n5)
+
+        # ESV 在历史数据中可能缺失或为 NaN, 过滤后退化样本量再交给 _calc_metric_stats
+        if 'ESV' in g.columns:
+            es_raw = g['ESV'].astype(float).values
+            es_vals = es_raw[np.isfinite(es_raw)]
+        else:
+            es_vals = np.array([], dtype=float)
+        if es_vals.size >= 2:
+            es_mu, es_sigma, es_cv, es_ci_half, es_ci_ratio = _calc_metric_stats(
+                es_vals, int(es_vals.size), t_crit_n5)
+        elif es_vals.size == 1:
+            es_mu, es_sigma, es_cv, es_ci_half, es_ci_ratio = float(es_vals[0]), 0.0, nan, 0.0, nan
+        else:
+            es_mu = es_sigma = es_cv = es_ci_half = es_ci_ratio = nan
 
         n_pred = int(g['n_pred'].iloc[0]) if g['n_pred'].notna().any() else ''
         level = g['level'].iloc[0] if g['level'].notna().any() else ''
@@ -941,6 +962,8 @@ def build_stability_per_sample_csv(runs_df,
             'n_runs': n,
             'F_mu': f_mu, 'F_sigma': f_sigma, 'F_cv_pct': f_cv,
             'F_ci95_half': f_ci_half, 'F_ci95_width_ratio_pct': f_ci_ratio,
+            'ES_mu': es_mu, 'ES_sigma': es_sigma, 'ES_cv_pct': es_cv,
+            'ES_ci95_half': es_ci_half, 'ES_ci95_width_ratio_pct': es_ci_ratio,
             'RT_mu': rt_mu, 'RT_sigma': rt_sigma, 'RT_cv_pct': rt_cv,
             'RT_ci95_half': rt_ci_half, 'RT_ci95_width_ratio_pct': rt_ci_ratio,
         })
@@ -960,13 +983,13 @@ def build_stability_summary_csv(per_sample_df,
                                 cv_threshold_pct: float = 5.0):
     """按 algorithm × metric 汇总 per_sample 的 CV 分布, 输出论文 tab:stability-summary.
 
-    同时对 F(S) 和 Runtime 两类 CV 做跨样本汇总, 生成 4 行:
-    SA-F(S), SA-Runtime, GA-F(S), GA-Runtime.
+    对 F(S) / ES / Runtime 三类 CV 做跨样本汇总, 生成 6 行:
+    SA-F(S), SA-ES, SA-Runtime, GA-F(S), GA-ES, GA-Runtime.
 
     Parameters
     ----------
     per_sample_df : pd.DataFrame
-        build_stability_per_sample_csv 的输出, 含 F_cv_pct / RT_cv_pct 列.
+        build_stability_per_sample_csv 的输出, 含 F_cv_pct / ES_cv_pct / RT_cv_pct 列.
     save_path : str
         输出 CSV 路径.
     cv_threshold_pct : float
@@ -986,16 +1009,21 @@ def build_stability_summary_csv(per_sample_df,
     rows = []
     for alg, g in per_sample_df.groupby('algorithm', sort=False):
         n_samples = len(g)
-        for metric_label, cv_col in [('F(S)', 'F_cv_pct'), ('Runtime', 'RT_cv_pct')]:
-            cv = g[cv_col].astype(float).values
+        for metric_label, cv_col in [('F(S)', 'F_cv_pct'), ('ES', 'ES_cv_pct'), ('Runtime', 'RT_cv_pct')]:
+            cv_series = g[cv_col].astype(float)
+            # 过滤 NaN (ES 列在部分历史数据中可能全为 NaN)
+            cv = cv_series.dropna().values
+            if cv.size == 0:
+                continue
+            n_valid = cv.size
             n_le_thr = int(np.sum(cv <= cv_threshold_pct))
             rows.append({
                 'algorithm': alg,
                 'metric': metric_label,
-                'n_samples': n_samples,
+                'n_samples': n_valid,
                 'mean_cv_pct': float(np.mean(cv)),
                 'max_cv_pct': float(np.max(cv)),
-                f'cv_le_{int(cv_threshold_pct)}pct_ratio_pct': float(n_le_thr / n_samples * 100) if n_samples else 0.0,
+                f'cv_le_{int(cv_threshold_pct)}pct_ratio_pct': float(n_le_thr / n_valid * 100) if n_valid else 0.0,
             })
 
     out = pd.DataFrame(rows)

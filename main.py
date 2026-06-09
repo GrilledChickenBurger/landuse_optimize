@@ -80,31 +80,56 @@ def run_ablation_pipeline():
     ablation_pipeline(
         opt_cfg_path=os.path.join("configs","optimizerConfig.yaml"),
         score_cfg_path=os.path.join("configs","score_cfg.yaml"),
-        idxs=idxs,
+        idxs=[1788, 698, 1723],
         mode='stability',
-        n_repeats=2,
+        n_repeats=5,
     )
 
 def run_ablation_plots_pipeline(experiment_root: str = None,
-                                 sibling_experiment_roots=None):
+                                 sibling_experiment_roots=None,
+                                 mode: str = 'auto',
+                                 show_runtime: bool = True):
     """对消融实验结果出图: 稳定性叠图 + A/B/C 三组对比 + 箱线图 + 表格.
 
     如需 SA+GA 合并出 CV 折线图/汇总表, 传 sibling_experiment_roots (GA 的结果目录列表).
-    会把 (SA)/plots/stability_runs.csv 与 (GA)/plots/stability_runs.csv 合并后,
-    输出 stability_per_sample.csv / stability_summary.csv / stability_cv_line.png.
+    此时会先对每个 experiment_root 独立出图, 再将合并产物写入同级合并目录
+    (如 ``<sa_ts>+<ga_ts>_combined/plots/``).
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     experiment_root : str, optional
         消融实验结果根目录 (主, 通常为 SA); None 则自动查找 results/ablation/ 下最新目录.
     sibling_experiment_roots : list of str, optional
         其他算法版本 (如 GA) 的结果目录列表, 用于合并出 CV 折线图与汇总.
+    mode : str
+        后处理模式: 'stability' 仅稳定性输出 / 'ablation' 仅消融对比 / 'auto' 自动检测.
+    show_runtime : bool
+        箱线图和折线图是否包含 Runtime 维度, 默认 True.
     """
-    from pipelines.ablation_plots import run_all_ablation_plots
+    from pipelines.ablation_plots import run_all_ablation_plots, run_combined_stability_plots
     if experiment_root is None:
         experiment_root = _get_latest_experiment_dir('ablation')
-    run_all_ablation_plots(experiment_root=experiment_root,
-                            sibling_experiment_roots=sibling_experiment_roots)
+
+    sibling_experiment_roots = sibling_experiment_roots or []
+    if not sibling_experiment_roots:
+        run_all_ablation_plots(experiment_root=experiment_root,
+                                sibling_experiment_roots=None,
+                                mode=mode,
+                                show_runtime=show_runtime)
+        return
+
+    roots_to_run = [experiment_root] + list(sibling_experiment_roots)
+    for root in roots_to_run:
+        print(f"\n[run_ablation_plots_pipeline] 单独处理: {root}")
+        run_all_ablation_plots(experiment_root=root,
+                                sibling_experiment_roots=None,
+                                mode=mode,
+                                show_runtime=show_runtime)
+
+    run_combined_stability_plots(experiment_root=experiment_root,
+                                  sibling_experiment_roots=sibling_experiment_roots,
+                                  mode=mode,
+                                  show_runtime=show_runtime)
 
 
 def run_tornado_pipeline(max_samples: int = None):
@@ -214,8 +239,13 @@ if __name__ == "__main__":
     # run_valid_pipeline()
     # run_runner_pipeline()
     # run_experiment_pipeline()
-    run_ablation_pipeline()
-    # run_ablation_plots_pipeline()
+    # run_ablation_pipeline()
+    run_ablation_plots_pipeline(
+        experiment_root='results/ablation/20260607_210931',
+        sibling_experiment_roots=['results/ablation/20260608_185005'],
+        mode='stability',
+        show_runtime=True,
+    )
     # run_tornado_pipeline(3)
     # run_sensitivity_pipeline()
     # run_tornado_plots_pipeline()
