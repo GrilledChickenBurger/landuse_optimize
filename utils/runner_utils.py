@@ -209,11 +209,12 @@ def get_initial_score_list() -> List[float]:
         - tgt_func: 目标函数值
         - change_relative_score: 变化得分
         - es_relative_score: 环境得分
-        - es_relative_score_dict: 环境得分字典
+        - es_relative_score_dict: 环境得分字典(相对值)
+        - es_value_dict: 环境得分字典(原始绝对值)
         - landscape_score: 景观格局得分
     """
     inf = float('inf')
-    return [inf, inf, 0.0, {}, 0.0]
+    return [inf, inf, 0.0, {}, {}, 0.0]
     
 
 def draw_score_list(score_list_data: List[Union[List[float], Dict[str, List[float]]]], title_list: List[str] = None, save_folder: str = None) -> None:
@@ -233,27 +234,44 @@ def draw_score_list(score_list_data: List[Union[List[float], Dict[str, List[floa
         title_list: List[str], 图表标题列表
         save_folder: str, 图表保存文件夹
     """
-    score_list = score_list_data[:-1]
-    es_score_list_dict = score_list_data[-1]
-    for i, score_list in enumerate(score_list):
+    score_lists = score_list_data[:-2] if len(score_list_data) >= 6 else score_list_data[:-1]
+    es_rel_dict = score_list_data[-2] if len(score_list_data) >= 6 else score_list_data[-1]
+    es_value_dict = score_list_data[-1] if len(score_list_data) >= 6 else None
+    for i, score_list in enumerate(score_lists):
+        if not score_list:
+            continue
         length = len(score_list)
         steps = list(range(1,length+1))
         ensure_folder(save_folder)
         save_path = save_folder + f'/{title_list[i]}.png'
-        draw_single_line(steps, score_list, title_list[i], 
+        draw_single_line(steps, score_list, title_list[i],
                         x_label='Step', y_label='score',
                         title=title_list[i],
                         save_path=save_path)
-    
-    es_length = len(es_score_list_dict['food'])
-    es_steps = list(range(1,es_length+1))
-    datas = es_score_list_dict.values()
-    labels = es_score_list_dict.keys()
-    save_path = f'{save_folder}/ES详情.png'
-    draw_multi_line(es_steps, datas, labels, 
-                            x_label='Step', y_label='score',
-                            title='Ecosystem Services', 
-                            save_path=save_path)
+
+    # ES 细分相对值多线图
+    if es_rel_dict:
+        es_length = len(es_rel_dict['food'])
+        es_steps = list(range(1,es_length+1))
+        datas = es_rel_dict.values()
+        labels = es_rel_dict.keys()
+        save_path = f'{save_folder}/ES详情.png'
+        draw_multi_line(es_steps, datas, labels,
+                                x_label='Step', y_label='score',
+                                title='Ecosystem Services (relative)',
+                                save_path=save_path)
+
+    # ES 细分原始绝对值多线图 (仅当有数据时)
+    if es_value_dict and es_value_dict.get('food'):
+        ev_length = len(es_value_dict['food'])
+        ev_steps = list(range(1, ev_length + 1))
+        ev_datas = es_value_dict.values()
+        ev_labels = es_value_dict.keys()
+        ev_path = f'{save_folder}/ES详情_原始值.png'
+        draw_multi_line(ev_steps, ev_datas, ev_labels,
+                        x_label='Step', y_label='score',
+                        title='Ecosystem Services (absolute)',
+                        save_path=ev_path)
 
 def draw_score_list_general(score_list_data: List[List[float]], 
                             title_list: List[str] = None, 

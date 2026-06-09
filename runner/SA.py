@@ -170,6 +170,7 @@ class SimulatedAnnealing:
         self.landscape_score_list = []
         self.es_score_list = []
         self.es_dict:Dict[str,List[float]] = {'food':[],'carbon':[],'water':[],'culture':[]}
+        self.es_value_dict:Dict[str,List[float]] = {'food':[],'carbon':[],'water':[],'culture':[]}
         self.text = ''
         self.print_frequency = config.print_frequency
         self.visualize_frequency = config.visualize_frequency
@@ -188,21 +189,24 @@ class SimulatedAnnealing:
                 total_score: tensor[float], 总分
                 change_score: tensor[float], 目标函数项1, 和预测变化区域的接近程度得分
                 es_score: tensor[float], 目标函数项2, 生态系统服务综合得分
-                es_dict: Dict, 生态系统服务综合得分的字典
+                es_dict: Dict, 生态系统服务综合得分的字典(相对值)
+                es_value_dict: Dict, 生态系统服务综合得分的字典(原始绝对值)
                 landscape_score: tensor[float], 目标函数项3, 破碎化限制得分
         """
-        total_score, change_score, es_score, es_dict, landscape_score = score_list
+        total_score, change_score, es_score, es_dict, es_value_dict, landscape_score = score_list
         self.total_score_list.append(total_score)
         self.change_score_list.append(-change_score)
         self.es_score_list.append(es_score)
         self.text = f'change_score={-change_score:.4f}, ES_score={-es_score:.4f}'
         for key, value in es_dict.items():
             self.es_dict[key].append(value)
+        for key, value in es_value_dict.items():
+            self.es_value_dict[key].append(float(value))
 
         if self.use_landscape:
             self.landscape_score_list.append(-landscape_score)
             self.text = f'{self.text}, landscape_score={-landscape_score:.4f}'
-        
+
         self.text = f'{self.text}.'
 
 
@@ -364,7 +368,7 @@ class SimulatedAnnealing:
             raw_data_root=RAW_DATA_ROOT
         )
         # 绘制目标函数项的变化趋势图
-        score_list_data = [self.total_score_list, self.change_score_list, self.es_score_list, self.landscape_score_list, self.es_dict ]
+        score_list_data = [self.total_score_list, self.change_score_list, self.es_score_list, self.landscape_score_list, self.es_dict, self.es_value_dict]
         rUtils.draw_score_list(score_list_data, ['total_score', 'change_score', 'ES_score', 'landscape_score'],
                                 save_folder=os.path.join(result_folder, 'charts'))
         # 可视化最终方案
@@ -386,10 +390,47 @@ class SimulatedAnnealing:
         return self.best_plan
 
     def _dump_convergence(self, result_folder: str, t0: float) -> None:
-        """保存 total_score_list 和收敛统计, 用于 ablation 实验 A 收敛速度对比"""
+        """保存每代分数序列(.npy)和收敛统计(convergence.json), 供后处理分析.
+
+        写入 .npy:
+          - total_score_list.npy:    综合目标函数 tgt_func (越小越好)
+          - change_score_list.npy:   变化位置得分 (取负)
+          - es_score_list.npy:       生态系统服务综合得分
+          - landscape_score_list.npy: 景观破碎化得分 (取负, use_landscape=False 时为空)
+          - es_food.npy / es_carbon.npy / es_water.npy / es_culture.npy:
+            四项 ES 的相对值序列
+          - es_food_raw.npy / es_carbon_raw.npy / es_water_raw.npy / es_culture_raw.npy:
+            四项 ES 的原始绝对值序列
+        """
         wall_time = time.perf_counter() - t0
         score_arr = np.array([float(s) for s in self.total_score_list])
         np.save(os.path.join(result_folder, 'total_score_list.npy'), score_arr)
+        # 保存子指标逐代序列, 供后续子指标稳定性分析
+        for attr_name, file_name in [
+            ('change_score_list', 'change_score_list.npy'),
+            ('es_score_list', 'es_score_list.npy'),
+            ('landscape_score_list', 'landscape_score_list.npy'),
+        ]:
+            lst = getattr(self, attr_name, None)
+            if lst:
+                np.save(os.path.join(result_folder, file_name),
+                        np.array([float(s) for s in lst]))
+        # 保存 ES 四项细分: 相对值
+        for es_key, file_suffix in [('food', 'es_food.npy'),
+                                     ('carbon', 'es_carbon.npy'),
+                                     ('water', 'es_water.npy'),
+                                     ('culture', 'es_culture.npy')]:
+            if self.es_dict and self.es_dict.get(es_key):
+                np.save(os.path.join(result_folder, file_suffix),
+                        np.array([float(v) for v in self.es_dict[es_key]]))
+        # 保存 ES 四项细分: 原始绝对值
+        for es_key, file_suffix in [('food', 'es_food_raw.npy'),
+                                     ('carbon', 'es_carbon_raw.npy'),
+                                     ('water', 'es_water_raw.npy'),
+                                     ('culture', 'es_culture_raw.npy')]:
+            if self.es_value_dict and self.es_value_dict.get(es_key):
+                np.save(os.path.join(result_folder, file_suffix),
+                        np.array([float(v) for v in self.es_value_dict[es_key]]))
         # 最小化问题: 触及 1.05 * best_score 的首次步数 (best_score 为负时反向)
         best = float(self.best_score)
         if best < 0:

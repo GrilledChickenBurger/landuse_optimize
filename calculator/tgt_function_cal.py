@@ -54,8 +54,8 @@ def cal_tgt_function(cur_plan: torch.Tensor,
         lambda_LS: float, optional, 预计算的 LS 权重系数. 与 lambda_ES 同时提供时跳过插值.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, float], float]:
-        tgt_func, change_score, es_score, es_scores(dict), landscape_score
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, float], Dict[str, float], float]:
+        tgt_func, change_score, es_score, es_scores_relative(dict), es_scores_absolute(dict), landscape_score
     """
     cfg = score_cfg if score_cfg is not None else get_default_score_cfg()
 
@@ -77,7 +77,8 @@ def cal_tgt_function(cur_plan: torch.Tensor,
 
     change_term = change_relative_score
     tgt_func = change_term - lambda_ES * es_relative_score + lambda_LS * landscape_score
-    return tgt_func, change_relative_score, es_relative_score, es_relative_score_dict, landscape_score
+    return (tgt_func, change_relative_score, es_relative_score,
+            es_relative_score_dict, es_ori_score_dict, landscape_score)
 
 
 

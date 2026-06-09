@@ -414,6 +414,7 @@ class GeneticAlgorithm:
         self.landscape_score_list = []  # 最佳个体的景观破碎化得分列表
         self.es_score_list = []  # 最佳个体的生态系统服务得分列表
         self.es_dict:Dict[str,List[float]] = {'food':[],'carbon':[],'water':[],'culture':[]}
+        self.es_value_dict:Dict[str,List[float]] = {'food':[],'carbon':[],'water':[],'culture':[]}
         # 种群级别统计信息
         self.best_fitness_list = []  # 种群最佳适应度值列表
         self.avg_fitness_list = []  # 种群平均适应度值列表
@@ -481,7 +482,8 @@ class GeneticAlgorithm:
                 total_score: tensor[float], 总分
                 change_score: tensor[float], 目标函数项1, 和预测变化区域的接近程度得分
                 es_score: tensor[float], 目标函数项2, 生态系统服务综合得分
-                es_dict: Dict, 生态系统服务综合得分的字典
+                es_dict: Dict, 生态系统服务综合得分的字典(相对值)
+                es_value_dict: Dict, 生态系统服务综合得分的字典(原始绝对值)
                 landscape_score: tensor[float], 目标函数项3, 破碎化限制得分
             pop_stats_dict: Dict, 包含种群级别的统计信息
                 best_fitness: float, 最佳适应度值
@@ -490,12 +492,14 @@ class GeneticAlgorithm:
                 std_fitness: float, 适应度值的标准差
         """
         # ----- 最佳个体级别统计信息 -----
-        total_score, change_score, es_score, es_dict, landscape_score = score_list
+        total_score, change_score, es_score, es_dict, es_value_dict, landscape_score = score_list
         self.total_score_list.append(total_score)
         self.change_score_list.append(-change_score)
         self.es_score_list.append(es_score)
         for key, value in es_dict.items():
             self.es_dict[key].append(value)
+        for key, value in es_value_dict.items():
+            self.es_value_dict[key].append(float(value))
         if self.use_landscape:
             self.landscape_score_list.append(-landscape_score)
         
@@ -513,7 +517,7 @@ class GeneticAlgorithm:
             score_list: List, 包含最佳个体的目标函数项的列表
             pop_stats_dict: Dict, 包含种群级别的统计信息
         """
-        total_score, change_score, es_score, es_dict, landscape_score = score_list
+        total_score, change_score, es_score, es_dict, es_value_dict, landscape_score = score_list
         self.idi_text = f'change_score={-change_score:.4f}, ES_score={-es_score:.4f}'
         idi_text_parts = [f'change_score={-change_score:.4f}', f'ES_score={-es_score:.4f}']
         if self.use_landscape:
@@ -809,7 +813,8 @@ class GeneticAlgorithm:
             self.change_score_list,  # 最佳个体目标函数项1, 和预测变化区域的接近程度得分
             self.es_score_list,  # 最佳个体目标函数项2, 生态系统服务综合得分
             self.landscape_score_list,  # 最佳个体目标函数项3, 破碎化限制得分
-            self.es_dict # 最佳个体ES得分细分
+            self.es_dict,  # 最佳个体ES得分细分(相对值)
+            self.es_value_dict,  # 最佳个体ES得分细分(原始绝对值)
         ]
         rUtils.draw_score_list(score_list_data, ['total_score', 'change_score', 'ES_score', 'landscape_score'],
                                 save_folder=os.path.join(result_folder, 'charts'))
@@ -843,12 +848,56 @@ class GeneticAlgorithm:
 
 
     def _dump_convergence(self, result_folder: str, t0: float) -> None:
-        """保存 total_score_list 和收敛统计, 用于 ablation 实验 A 收敛速度对比.
+        """保存每代分数序列(.npy)和收敛统计(convergence.json), 供后处理分析.
+
         注意 GA 的 total_score_list 保存的是 fitness (= -tgt_func), 越大越好.
+        写入 .npy:
+          - total_score_list.npy:    fitness (越大越好)
+          - change_score_list.npy:   最佳个体变化位置得分 (取负)
+          - es_score_list.npy:       最佳个体生态系统服务综合得分
+          - landscape_score_list.npy: 最佳个体景观破碎化得分 (取负, use_landscape=False 时为空)
+          - best_fitness_list.npy:   种群最佳适应度
+          - worst_fitness_list.npy:  种群最差适应度
+          - avg_fitness_list.npy:    种群平均适应度
+          - std_fitness_list.npy:    种群适应度标准差
+          - es_food.npy / es_carbon.npy / es_water.npy / es_culture.npy:
+            四项 ES 的相对值序列
+          - es_food_raw.npy / es_carbon_raw.npy / es_water_raw.npy / es_culture_raw.npy:
+            四项 ES 的原始绝对值序列
         """
         wall_time = time.perf_counter() - t0
         score_arr = np.array([float(s) for s in self.total_score_list])
         np.save(os.path.join(result_folder, 'total_score_list.npy'), score_arr)
+        # 保存子指标逐代序列, 供后续子指标稳定性分析
+        for attr_name, file_name in [
+            ('change_score_list', 'change_score_list.npy'),
+            ('es_score_list', 'es_score_list.npy'),
+            ('landscape_score_list', 'landscape_score_list.npy'),
+            ('best_fitness_list', 'best_fitness_list.npy'),
+            ('worst_fitness_list', 'worst_fitness_list.npy'),
+            ('avg_fitness_list', 'avg_fitness_list.npy'),
+            ('std_fitness_list', 'std_fitness_list.npy'),
+        ]:
+            lst = getattr(self, attr_name, None)
+            if lst:
+                np.save(os.path.join(result_folder, file_name),
+                        np.array([float(s) for s in lst]))
+        # 保存 ES 四项细分: 相对值
+        for es_key, file_suffix in [('food', 'es_food.npy'),
+                                     ('carbon', 'es_carbon.npy'),
+                                     ('water', 'es_water.npy'),
+                                     ('culture', 'es_culture.npy')]:
+            if self.es_dict and self.es_dict.get(es_key):
+                np.save(os.path.join(result_folder, file_suffix),
+                        np.array([float(v) for v in self.es_dict[es_key]]))
+        # 保存 ES 四项细分: 原始绝对值
+        for es_key, file_suffix in [('food', 'es_food_raw.npy'),
+                                     ('carbon', 'es_carbon_raw.npy'),
+                                     ('water', 'es_water_raw.npy'),
+                                     ('culture', 'es_culture_raw.npy')]:
+            if self.es_value_dict and self.es_value_dict.get(es_key):
+                np.save(os.path.join(result_folder, file_suffix),
+                        np.array([float(v) for v in self.es_value_dict[es_key]]))
         best_fitness = float(self.best_score)
         # fitness 越大越好; 95% 边界 = best * 0.95 (若 best>0) 或 best * 1.05 (若 best<0)
         if best_fitness < 0:
