@@ -6,7 +6,6 @@ from pipelines.train import training_pipeline,valid_pipeline, get_changed_indice
 from pipelines.statistic import get_params
 from pipelines.ablation import ablation_pipeline
 from pipelines.tornado import tornado_pipeline
-from utils.exp_sweep_utils import ExperimentResultStore
 from pipelines.results_analysis import (
     comparison_pipeline,
     model_comparison_pipeline,
@@ -181,23 +180,24 @@ def run_sensitivity_pipeline(top_k_params=None, max_samples: int = None):
     )
 
 
-def run_tornado_plots_pipeline(experiment_root: str = None):
-    """对 tornado / sensitivity 结果出图: tornado 图 + 一维线图.
+def run_tornado_plots_pipeline(experiment_root: str = None,
+                               mode: str = 'auto',
+                               baseline_name: str = 'A_baseline'):
+    """对 tornado / sensitivity 结果出图和表格.
 
     Parameters:
     -----------
     experiment_root : str, optional
         实验结果根目录; None 则自动查找 results/tornado/ 下最新目录.
+    mode : {'tornado', 'sensitivity', 'auto'}
+        后处理模式. auto 优先读取 experiment_summary.json 中的 mode.
+    baseline_name : str
+        tornado 基线实验名.
     """
-    from pipelines.tornado_plots import run_tornado_plots, plot_sensitivity_lines
+    from pipelines.tornado_plots import run_tornado_plots
     if experiment_root is None:
         experiment_root = _get_latest_experiment_dir('tornado')
-    run_tornado_plots(experiment_root, baseline_name='A_baseline')
-    plot_sensitivity_lines(ExperimentResultStore(experiment_root), metric='final_best')
-
-def _get_latest_ablation_dir() -> str:
-    """[deprecated] 向后兼容别名, 请使用 _get_latest_experiment_dir('ablation')."""
-    return _get_latest_experiment_dir('ablation')
+    run_tornado_plots(experiment_root, baseline_name=baseline_name, mode=mode)
 
 
 def run_results_analysis_pipeline():
