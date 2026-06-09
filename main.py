@@ -88,7 +88,8 @@ def run_ablation_pipeline():
 def run_ablation_plots_pipeline(experiment_root: str = None,
                                  sibling_experiment_roots=None,
                                  mode: str = 'auto',
-                                 show_runtime: bool = True):
+                                 show_runtime: bool = True,
+                                 combined_only: bool = False):
     """对消融实验结果出图: 稳定性叠图 + A/B/C 三组对比 + 箱线图 + 表格.
 
     如需 SA+GA 合并出 CV 折线图/汇总表, 传 sibling_experiment_roots (GA 的结果目录列表).
@@ -105,6 +106,9 @@ def run_ablation_plots_pipeline(experiment_root: str = None,
         后处理模式: 'stability' 仅稳定性输出 / 'ablation' 仅消融对比 / 'auto' 自动检测.
     show_runtime : bool
         箱线图和折线图是否包含 Runtime 维度, 默认 True.
+    combined_only : bool
+        若为 True 且传入了 sibling_experiment_roots, 跳过单算法出图,
+        直接从已有 stability_runs.csv 生成合并结果.
     """
     from pipelines.ablation_plots import run_all_ablation_plots, run_combined_stability_plots
     if experiment_root is None:
@@ -116,6 +120,13 @@ def run_ablation_plots_pipeline(experiment_root: str = None,
                                 sibling_experiment_roots=None,
                                 mode=mode,
                                 show_runtime=show_runtime)
+        return
+
+    if combined_only:
+        run_combined_stability_plots(experiment_root=experiment_root,
+                                      sibling_experiment_roots=sibling_experiment_roots,
+                                      mode=mode,
+                                      show_runtime=show_runtime)
         return
 
     roots_to_run = [experiment_root] + list(sibling_experiment_roots)

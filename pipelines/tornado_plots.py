@@ -6,9 +6,20 @@ from typing import Dict, List, Optional, Any, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 
 from utils.io_utils import ensure_folder
 from utils.exp_sweep_utils import ExperimentResultStore, aggregate_runs, _calc_metric_stats
+
+# ── 全局字体: 英文 Times New Roman Bold ──────────────────────────
+mpl.rcParams['font.family'] = 'Times New Roman'
+mpl.rcParams['font.weight'] = 'bold'
+mpl.rcParams['axes.unicode_minus'] = False
+mpl.rcParams['mathtext.fontset'] = 'custom'
+mpl.rcParams['mathtext.rm'] = 'Times New Roman'
+mpl.rcParams['mathtext.bf'] = 'Times New Roman:bold'
+mpl.rcParams['mathtext.it'] = 'Times New Roman:italic'
+# ──────────────────────────────────────────────────────────────────
 
 
 TORNADO_PERFORMANCE_METRICS = [

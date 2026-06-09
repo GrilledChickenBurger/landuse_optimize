@@ -5,9 +5,32 @@ from typing import Dict, List, Optional, Any
 
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import torch
 
 from libs.const import COLOR_MAP
+
+# ── 全局字体: 英文 Times New Roman Bold ──────────────────────────
+mpl.rcParams['font.family'] = 'Times New Roman'
+mpl.rcParams['font.weight'] = 'bold'
+mpl.rcParams['axes.unicode_minus'] = False
+mpl.rcParams['mathtext.fontset'] = 'custom'
+mpl.rcParams['mathtext.rm'] = 'Times New Roman'
+mpl.rcParams['mathtext.bf'] = 'Times New Roman:bold'
+mpl.rcParams['mathtext.it'] = 'Times New Roman:italic'
+# ──────────────────────────────────────────────────────────────────
+
+
+# Q1-Q5 背景色映射 (浅色, 从冷到暖)
+_LEVEL_COLORS = {
+    'Q1': '#deebf7',  # 浅蓝
+    'Q2': '#e5f5e0',  # 浅绿
+    'Q3': '#fff7bc',  # 浅黄
+    'Q4': '#fed9a6',  # 浅橙
+    'Q5': '#fcbba1',  # 浅红
+}
+_LEVEL_ORDER = ['Q1', 'Q2', 'Q3', 'Q4', 'Q5']
+
 from utils.tools import ensure_folder, visualize_tensor_list
 from utils.exp_sweep_utils import (
     ABLATION_GROUPS,
@@ -295,20 +318,20 @@ def plot_boxplot_final(store: ExperimentResultStore,
 def plot_stability_cv_line(per_sample_csv_or_df,
                             save_path: str,
                             metric: str = 'F(S)',
-                            figsize=(10, 5)) -> None:
+                            figsize=(12, 5)) -> None:
     """CV 散点图: N 个样本按 n_pred 升序, SA vs GA 两组散点.
 
     依照 stability.md 5.2: 无连线, 加 5% 参考虚线.
+    X 轴用 S1..SN 短标签; 不同 level (Q1-Q5) 有不同背景色.
 
     Parameters
     ----------
     per_sample_csv_or_df : str or pd.DataFrame
-        stability_per_sample.csv 路径, 或由 merge + build 得到的 DataFrame
-        (需含 F_cv_pct / RT_cv_pct 列).
+        stability_per_sample.csv 路径或 DataFrame.
     save_path : str
         输出 PNG 路径.
     metric : str
-        'F(S)' 或 'Runtime', 选择画哪一列 CV.
+        'F(S)' / 'ES' / 'Runtime'.
     figsize : tuple
         图片尺寸.
     """
@@ -348,30 +371,65 @@ def plot_stability_cv_line(per_sample_csv_or_df,
         print(f"  [cv_scatter] 无有效数据, 跳过")
         return
 
+    # 用 SA 顺序作为 x 轴骨架 (若 SA 为空则用 GA)
+    primary = sa if not sa.empty else ga
+    n = len(primary)
+    x_positions = np.arange(n)
+
     fig, ax = plt.subplots(figsize=figsize)
     x_label = r'Sample (sorted by $n_{\mathrm{pred}}$)'
-    markersize = 8
+    markersize = 9
 
+    # ── 按 level 画背景色带 ──────────────────────────────────────
+    has_level = 'level' in primary.columns
+    if has_level:
+        for i in range(n):
+            lv = primary['level'].iloc[i]
+            color = _LEVEL_COLORS.get(str(lv), '#f5f5f5')
+            ax.axvspan(i - 0.5, i + 0.5, facecolor=color, edgecolor='none',
+                       zorder=0)
+
+    # ── SA 散点 ──────────────────────────────────────────────────
     if not sa.empty:
-        x_positions = np.arange(len(sa))
-        ax.scatter(x_positions, sa[cv_col].values,
-                   color='tab:blue', label='SA', s=markersize**2, zorder=3)
-        ax.set_xticks(x_positions)
-        ax.set_xticklabels(sa['sample_id'].values, rotation=45, ha='right', fontsize=8)
+        # SA 样本按 n_pred 排序后的位置
+        sa_order = np.arange(len(sa))
+        ax.scatter(sa_order, sa[cv_col].values,
+                   color='tab:blue', label='SA', s=markersize**2,
+                   edgecolors='navy', linewidth=0.5, zorder=4)
 
+    # ── GA 散点 ──────────────────────────────────────────────────
     if not ga.empty:
-        gx_positions = np.arange(len(ga))
-        ax.scatter(gx_positions, ga[cv_col].values,
-                   color='tab:orange', label='GA', s=markersize**2, marker='s', zorder=3)
-        if sa.empty:
-            ax.set_xticks(gx_positions)
-            ax.set_xticklabels(ga['sample_id'].values, rotation=45, ha='right', fontsize=8)
+        ga_order = np.arange(len(ga))
+        ax.scatter(ga_order, ga[cv_col].values,
+                   color='tab:orange', label='GA', s=markersize**2,
+                   marker='s', edgecolors='darkorange', linewidth=0.5, zorder=4)
+
+    # ── X 轴: S1..SN 短标签 ──────────────────────────────────────
+    ax.set_xticks(x_positions)
+    ax.set_xticklabels([f'S{i + 1}' for i in range(n)],
+                       rotation=0, ha='center', fontsize=9)
+
+    # ── Level 图例 ───────────────────────────────────────────────
+    if has_level:
+        from matplotlib.patches import Patch
+        present_levels = [lv for lv in _LEVEL_ORDER
+                          if str(lv) in primary['level'].values]
+        if present_levels:
+            legend_patches = [Patch(facecolor=_LEVEL_COLORS[lv], edgecolor='#cccccc',
+                                    label=f'{lv} (n_pred ↑)') for lv in present_levels]
+            leg1 = ax.legend(handles=legend_patches, loc='upper left',
+                             title='Level', fontsize=8, title_fontsize=9,
+                             framealpha=0.9)
+            ax.add_artist(leg1)
+
+    # ── SA/GA 图例 ───────────────────────────────────────────────
+    ax.legend(loc='upper right', fontsize=9, framealpha=0.9)
 
     ax.set_xlabel(x_label)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
-    ax.legend()
-    ax.grid(linestyle='--', alpha=0.4)
+    ax.set_xlim(-0.7, n - 0.3)
+    ax.grid(axis='y', linestyle='--', alpha=0.4)
 
     # CV=5% 阈值水平线
     ax.axhline(y=5.0, color='gray', linestyle=':', alpha=0.6, linewidth=1.0)
