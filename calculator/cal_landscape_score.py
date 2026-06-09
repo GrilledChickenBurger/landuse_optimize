@@ -402,8 +402,8 @@ def cal_landscape_score_v2(cur_plan: torch.Tensor, cur_diff: torch.Tensor,
         if not np.any(lu_change_mask):
             continue
 
-        # 获取预计算的距离图
-        distance_map = info_dict["ori_lu_distancemap_dict"][lu]
+        # 获取预计算的距离图 (squeeze 去掉 batch 维度, 形状 (128,128))
+        distance_map = info_dict["ori_lu_distancemap_dict"][lu].squeeze()
 
         # 使用scipy的distance_transform_edt计算变化区域内部像素到原始区域的距离
         # distance_map already gives distance from each pixel to ori_lu area
