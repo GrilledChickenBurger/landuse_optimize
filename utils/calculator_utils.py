@@ -10,7 +10,7 @@ import torch
 from typing import Dict, List, Any
 from libs.const import FOOD_SUPPLY_PARAM
 from calculator.cal_change_score import get_change_min_score
-from calculator.cal_es_score import get_es_max_score
+from calculator.cal_es_score import get_es_max_score, compute_W_final
 from utils.train_maxent import train_pipeline
 from utils.tools import convert_to_nparray
 
@@ -193,6 +193,9 @@ def get_info_dict(ori_plan: torch.Tensor,
     
     food_supply_score = calculate_food_supply_param(info_dict)
     info_dict['food_supply_param'] = food_supply_score
+
+    # 预计算 W_final: 迭代中直接复用，避免每步重复 Miami/Thornthwaite 全图计算
+    info_dict['W_final'] = compute_W_final(info_dict['NJW'], info_dict['RAIN'], food_supply_score)
 
     # 计算各项生态系统服务最大得分, 用于归一化
     max_food_score, max_carbon_score, max_water_score, max_culture_score = get_es_max_score(ori_plan, pred_diff, info_dict)

@@ -7,6 +7,29 @@ from utils.tools import convert_to_nparray
 from libs.const import *
 
 
+def compute_W_final(NJW: torch.Tensor, RAIN: torch.Tensor, food_supply_param: torch.Tensor) -> torch.Tensor:
+    """预计算粮食生产潜力图 W_final，独立于 LU 方案，可在优化前一次性完成。
+    迭代中只需 W_final × is_cropland 即可得到 food_sum，避免每步全图 Miami/Thornthwaite 重算。
+
+    Parameters:
+        NJW: [1,1,128,128] 年均气温
+        RAIN: [1,1,128,128] 年均降雨量
+        food_supply_param: [1,1,128,128] 综合修订系数
+
+    Returns:
+        W_final: [1,1,128,128] 粮食生产潜力 (kg/(ha·a))
+    """
+    # Miami 模型
+    WT = 30000 / (1 + torch.exp(1.315 - 0.119 * NJW))
+    WR = 30000 / (1 - torch.exp(-0.000664 * RAIN))
+    # Thornthwaite Memorial 模型
+    L_ET = 300 + 25 * NJW + 0.05 * NJW ** 3
+    V_ET = 1.05 * RAIN / (1 + (1.05 * RAIN / L_ET) ** 2) ** 0.5
+    WV = 30000 / (1 - torch.exp(-0.0009695 * (V_ET - 20)))
+    W = torch.min(torch.min(WT, WR), WV)
+    return W * food_supply_param * 0.01
+
+
 def cal_es_score(cur_plan: torch.Tensor, info_dict: Dict[str, Any], weight_dict: Dict[str, float]) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor], torch.Tensor]:
     """
     计算当前计划的ES得分【相对值】, 越大表示越好, 范围:[0, 1]\n
@@ -54,12 +77,13 @@ def cal_es_value(plan: torch.Tensor, info_dict: Dict[str, Any], cal_func_dict: D
     for es_name, cal_func in cal_func_dict.items():
         # 根据函数名称传递相应的参数
         if es_name == 'food':
-            # calculate_food_supply(plan, NJW, RAIN, food_supply_param)
+            # calculate_food_supply(plan, NJW, RAIN, food_supply_param, W_final)
             _, es_value_dict[es_name] = cal_func(
                 plan,
                 info_dict['NJW'],
                 info_dict['RAIN'],
-                info_dict['food_supply_param']
+                info_dict['food_supply_param'],
+                info_dict['W_final']  # 预计算值，跳过迭代中每步 Miami/Thornthwaite 重算
             )
         elif es_name == 'carbon':
             # calculate_carbon_storage(plan, carbon_pool)
@@ -132,7 +156,9 @@ def get_es_max_score(ori_plan: torch.Tensor, pred_diff: torch.Tensor, info_dict:
 
 
 
-def calculate_food_supply(plan: torch.Tensor, NJW: torch.Tensor, RAIN: torch.Tensor, food_supply_param: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def calculate_food_supply(plan: torch.Tensor, NJW: torch.Tensor, RAIN: torch.Tensor,
+                          food_supply_param: torch.Tensor,
+                          W_final: torch.Tensor = None) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     第2-1项: 计算ES-粮食供给
     ------
@@ -145,37 +171,29 @@ def calculate_food_supply(plan: torch.Tensor, NJW: torch.Tensor, RAIN: torch.Ten
         T: 年均气温，栅格
         R: 年均降雨量，栅格
         W: 粮食生产潜力，单位为kg/(ha*a)
-    
+
     Parameters:
     ----------
         plan: tensor, [1,1,128,128]
         NJW: 年均气温, tensor, [1,1,128,128]
         RAIN: 年均降雨量, tensor, [1,1,128,128]
         food_supply_param: tensor, 粮食供给修正系数矩阵
-    
+        W_final: tensor, optional, [1,1,128,128], 预计算的粮食生产潜力图.
+                 若提供则跳过 Miami/Thornthwaite 全图重计算.
+
     Returns:
     ----------
         food: tensor, [1,1,128,128]
         food_sum: tensor, 单位为kg/a
     """
-    # Miami 模型公式
-    WT = 30000 / (1 + torch.exp(1.315 - 0.119 * NJW))
-    WR = 30000 / (1 - torch.exp(-0.000664 * RAIN))
+    available_area = torch.logical_or(plan == 11, plan == 12)  # 筛选出耕地区域
 
-    # Thornthwaite Memorial 模型公式
-    L_ET = 300 + 25 * NJW + 0.05 * NJW**3  # T 计算年均最大蒸散量
-    V_ET = 1.05 * RAIN / (1 + (1.05 * RAIN / L_ET) ** 2) ** 0.5  # L R 计算年均蒸散量
-    WV = 30000 / (1 - torch.exp(-0.0009695 * (V_ET - 20)))
+    if W_final is None:
+        # 首次初始化路径: 全图计算 Miami + Thornthwaite Memorial（仅执行一次）
+        W_final = compute_W_final(NJW, RAIN, food_supply_param)
 
-    W = torch.min(torch.min(WT, WR), WV)
-
-    # 修正系数=food_supply_param
-    W_final = W * food_supply_param*0.01
-
-    available_area = torch.logical_or(plan==11, plan==12)  # 筛选出耕地区域
     food = W_final * available_area
-    food_sum = torch.sum(food)*PIXEL_AREA_IN_HECTARES
-
+    food_sum = torch.sum(food) * PIXEL_AREA_IN_HECTARES
     return food, food_sum
 
 

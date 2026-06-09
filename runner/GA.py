@@ -11,7 +11,7 @@ import numpy as np
 from libs.const import *
 import libs.const as _libs_const
 from generator.ga_generator import initial_new_population, crossover, mutate
-from calculator.tgt_function_cal import cal_tgt_function
+from calculator.tgt_function_cal import cal_tgt_function, compute_lambdas
 import utils.calculator_utils as cUtils
 import utils.runner_utils as rUtils
 import utils.dataset_utils as dUtils
@@ -384,6 +384,9 @@ class GeneticAlgorithm:
             self.info_dict['ori_distance_map_dict'] = ori_distance_map_dict
             self.info_dict['ori_num_feature_dict'] = ori_num_feature_dict
 
+        # λ 系数在优化过程中不变，预计算避免每步插值
+        self.lambda_ES, self.lambda_LS = compute_lambdas(self.score_cfg, self.pred_diff_pixelnum)
+
         # 初始化当前种群 + 当前最佳方案
         self.best_plan = self.ori_plan
         self.best_score = float('-inf') # 初始化为无穷小，因为是最大化问题
@@ -633,7 +636,9 @@ class GeneticAlgorithm:
                                             es_weight_dict=self.es_weight_dict,
                                             use_landscape=self.use_landscape,
                                             score_cfg=self.score_cfg,
-                                            change_scale_n=self.pred_diff_pixelnum)
+                                            change_scale_n=self.pred_diff_pixelnum,
+                                            lambda_ES=self.lambda_ES,
+                                            lambda_LS=self.lambda_LS)
             score_list = list(score_list_ori)
             score_list[0] = -score_list[0]  # 适应度为负总得分
             fitness_list.append(score_list)  
