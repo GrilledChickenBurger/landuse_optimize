@@ -23,6 +23,7 @@ results/
 # IDE配置文件
 .vscode/
 .idea/
+.venv/
 
 # 临时文件
 *.tmp

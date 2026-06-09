@@ -25,15 +25,15 @@ libs/             常量、颜色映射、碳库查找表
 
 ### 1.1 各层职责边界
 
-| 层级 | 职责 | 禁止做的事 |
-|------|------|-----------|
-| **pipelines** | 编排工作流：读取 YAML、构造 DataLoader、循环调用 runner、保存 summary | 不直接实现模型结构、目标函数、优化算法 |
-| **datasets** | 从磁盘加载 TIFF → 归一化/one-hot → 返回 `data_pack` | 不调用 model、runner、calculator |
-| **models** | 定义 `nn.Module` 子类，实现 `forward()` | 不读取配置、不保存结果 |
-| **runner** | 封装 SA/GA 完整运行逻辑，对外暴露 `run()` → 返回 `best_plan` | 不重新训练 ANN、不直接修改 `libs.const` |
-| **calculator** | 计算目标函数各项得分（change/es/landscape） | 不保存文件、不修改全局状态 |
-| **utils** | 提供通用工具函数 | 不引入层间循环依赖（如 utils 不 import pipelines） |
-| **libs** | 定义常量、颜色映射、查找表 | 不引入业务逻辑 |
+| 层级           | 职责                                                                  | 禁止做的事                                         |
+| -------------- | --------------------------------------------------------------------- | -------------------------------------------------- |
+| **pipelines**  | 编排工作流：读取 YAML、构造 DataLoader、循环调用 runner、保存 summary | 不直接实现模型结构、目标函数、优化算法             |
+| **datasets**   | 从磁盘加载 TIFF → 归一化/one-hot → 返回 `data_pack`                   | 不调用 model、runner、calculator                   |
+| **models**     | 定义 `nn.Module` 子类，实现 `forward()`                               | 不读取配置、不保存结果                             |
+| **runner**     | 封装 SA/GA 完整运行逻辑，对外暴露 `run()` → 返回 `best_plan`          | 不重新训练 ANN、不直接修改 `libs.const`            |
+| **calculator** | 计算目标函数各项得分（change/es/landscape）                           | 不保存文件、不修改全局状态                         |
+| **utils**      | 提供通用工具函数                                                      | 不引入层间循环依赖（如 utils 不 import pipelines） |
+| **libs**       | 定义常量、颜色映射、查找表                                            | 不引入业务逻辑                                     |
 
 ### 1.2 工厂函数约定
 
@@ -56,10 +56,10 @@ libs/             常量、颜色映射、碳库查找表
 
 `data_pack` 是 `List`，索引位置固定，**不按字典键名访问**：
 
-| 阶段 | 索引 0 | 索引 1 | 索引 2 | 索引 3 | 索引 4 | 索引 5 |
-|------|--------|--------|--------|--------|--------|--------|
-| **训练** | `factors` | `srcLU` (one-hot) | `diff` | `idx_label` | `changed_flag` | — |
-| **优化** | `factors` | `restrict` (RA) | `es_data` | `srcLU` | `tgtLU` | `idx_label` |
+| 阶段     | 索引 0    | 索引 1            | 索引 2    | 索引 3      | 索引 4         | 索引 5      |
+| -------- | --------- | ----------------- | --------- | ----------- | -------------- | ----------- |
+| **训练** | `factors` | `srcLU` (one-hot) | `diff`    | `idx_label` | `changed_flag` | —           |
+| **优化** | `factors` | `restrict` (RA)   | `es_data` | `srcLU`     | `tgtLU`        | `idx_label` |
 
 - `factors` 形状：`(factor_num, H, W)` 或 `(factor_num-2, H, W)`（优化阶段不含 RA/LU）
 - `srcLU` one-hot 通道数固定为 **6**（6 类简化 LU）
@@ -96,17 +96,17 @@ def process_batch(data_pack, config) -> Dict[str, torch.Tensor]:
 
 新增代码前，先检查 `utils/` 中是否已有类似功能：
 
-| 需求 | 已有工具 |
-|------|---------|
-| 创建目录 | `utils.io_utils.ensure_folder()` |
-| 读取 YAML 为 Namespace | `utils.config_utils.get_yaml()` |
-| 按点号路径写配置 | `utils.tools._set_by_path()` |
-| 读取 `convergence.json` 字段 | `utils.exp_sweep_utils._read_conv_metric()` |
-| 加载 ANN 模型 | `utils.runner_utils.load_ANN_model()` |
-| 生成 `pred_diff` | `utils.runner_utils.get_pred_diff()` |
+| 需求                         | 已有工具                                             |
+| ---------------------------- | ---------------------------------------------------- |
+| 创建目录                     | `utils.io_utils.ensure_folder()`                     |
+| 读取 YAML 为 Namespace       | `utils.config_utils.get_yaml()`                      |
+| 按点号路径写配置             | `utils.tools._set_by_path()`                         |
+| 读取 `convergence.json` 字段 | `utils.exp_sweep_utils._read_conv_metric()`          |
+| 加载 ANN 模型                | `utils.runner_utils.load_ANN_model()`                |
+| 生成 `pred_diff`             | `utils.runner_utils.get_pred_diff()`                 |
 | 保存 TIFF + performance JSON | `utils.runner_utils.save_plan_and_get_performance()` |
-| 计算 ES 性能指标 | `utils.performance.write_performance_score()` |
-| 代表性样本 n_pred/level 映射 | `utils.exp_sweep_utils._load_representative_meta()` |
+| 计算 ES 性能指标             | `utils.performance.write_performance_score()`        |
+| 代表性样本 n_pred/level 映射 | `utils.exp_sweep_utils._load_representative_meta()`  |
 
 ### 3.3 配置覆写规范（消融/参数扫描实验）
 
@@ -215,6 +215,7 @@ def run(self):
 ### 5.3 结果保存职责边界
 
 **Runner 内部保存**：
+
 - `plans_{idx}/`：best_plan.TIF、ori_plan.TIF、tgt_plan.TIF
 - `convergence.json`：`final_best`、`es_score`、`iter_to_95pct`、`wall_time_sec`、`total_iter`
 - `performance.json`：Change_area / ES / Landscape / FINAL 四项指标
@@ -265,12 +266,12 @@ def cal_tgt_function(cur_plan: torch.Tensor,
 
 ### 6.3 模块分工
 
-| 文件 | 职责 |
-|------|------|
-| `tgt_function_cal.py` | 总目标函数组装，lambda 自适应调度 |
-| `cal_change_score.py` | 变化得分（距离地图、连通块分析） |
-| `cal_es_score.py` | ES 得分（粮食、碳汇、水源、文化服务） |
-| `cal_landscape_score.py` | 景观破碎化得分 |
+| 文件                     | 职责                                  |
+| ------------------------ | ------------------------------------- |
+| `tgt_function_cal.py`    | 总目标函数组装，lambda 自适应调度     |
+| `cal_change_score.py`    | 变化得分（距离地图、连通块分析）      |
+| `cal_es_score.py`        | ES 得分（粮食、碳汇、水源、文化服务） |
+| `cal_landscape_score.py` | 景观破碎化得分                        |
 
 ---
 
@@ -288,13 +289,13 @@ sample_id, n_pred, level, algorithm, config, run_idx, F_final, ESV, Runtime, T95
 
 所有 run 级核心指标优先写入 `convergence.json`，后处理脚本从中提取，不直接耦合 runner 内部状态：
 
-| 字段 | 含义 |
-|------|------|
-| `final_best` | 最终综合目标函数值 F(S) |
-| `es_score` | 最终生态系统服务得分 ESV |
-| `wall_time_sec` | 总运行时间 Runtime |
+| 字段            | 含义                          |
+| --------------- | ----------------------------- |
+| `final_best`    | 最终综合目标函数值 F(S)       |
+| `es_score`      | 最终生态系统服务得分 ESV      |
+| `wall_time_sec` | 总运行时间 Runtime            |
 | `iter_to_95pct` | 达到最优值 95% 的迭代步数 T95 |
-| `total_iter` | 总迭代数 |
+| `total_iter`    | 总迭代数                      |
 
 ### 7.3 后处理函数避免重复扫描
 
@@ -337,15 +338,16 @@ def build_stability_table(ablation_root: str, exp_name: str, save_path: Optional
 
 ### 8.2 Pipeline 文档分层
 
-| 位置 | 内容 | 不涉及 |
-|------|------|--------|
-| `docs/` | 逻辑梳理、字段标准、数据整合流程、操作手册 | 代码细节 |
-| `pipelines/docs/` | 每个 pipeline/模式的内部方法逻辑、数据流、关键覆写点 | 项目整体介绍 |
-| `pipelines/README.md` | 项目整体逻辑联系、模块依赖关系、入口函数索引 | 代码实现细节 |
+| 位置                  | 内容                                                 | 不涉及       |
+| --------------------- | ---------------------------------------------------- | ------------ |
+| `docs/`               | 逻辑梳理、字段标准、数据整合流程、操作手册           | 代码细节     |
+| `pipelines/docs/`     | 每个 pipeline/模式的内部方法逻辑、数据流、关键覆写点 | 项目整体介绍 |
+| `pipelines/README.md` | 项目整体逻辑联系、模块依赖关系、入口函数索引         | 代码实现细节 |
 
 ### 8.3 修改旧代码时同步更新
 
 如果重构了函数行为（如合并重复逻辑、改名、改返回值），必须同步更新：
+
 - 函数自身的 docstring
 - 所有调用处的注释（如有特殊说明）
 - 相关文档（如 `pipelines/README.md` 中的引用说明）
@@ -385,7 +387,7 @@ git config --global https.proxy http://127.0.0.1:7890
 如果代理工具未启动，`git push`/`git pull`/`git fetch` 会报错：
 
 ```
-fatal: unable to access 'https://github.com/...': 
+fatal: unable to access 'https://github.com/...':
 Failed to connect to 127.0.0.1 port 7890 after 2059 ms: Couldn't connect to server
 ```
 
@@ -418,3 +420,11 @@ git config --global https.proxy http://127.0.0.1:7890
 ```
 
 > ⚠️ **注意**：推送完成后务必恢复代理设置，否则后续 `git fetch`/`git pull` 等操作会因网络不通而失败。
+
+### 10.4 强制 Git 使用 HTTP/1.1
+
+无论代理是否绕过都push失败，可以使用这个方法，很多网络出口会干扰 HTTP/2，降级到 1.1 能绕过。
+
+```bash
+git config --global http.version HTTP/1.1
+```
