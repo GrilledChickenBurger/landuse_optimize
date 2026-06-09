@@ -7,7 +7,7 @@ tgt_function:
   lambda_ES_low: 5000 # pred_diff 像素数 < pixel_low 时的 λ_ES
   lambda_LS_high: 5 # pred_diff 像素数 > pixel_high 时的 λ_LS
   lambda_LS_low: 1 # pred_diff 像素数 < pixel_low 时的 λ_LS
-  pixel_high: 6000
+  pixel_high: 2000
   pixel_low: 300
 
 change_score:
