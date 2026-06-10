@@ -10,6 +10,14 @@ import matplotlib as mpl
 
 from utils.io_utils import ensure_folder
 from utils.exp_sweep_utils import ExperimentResultStore, aggregate_runs, _calc_metric_stats
+from utils.stats_utils import (
+    cohens_d,
+    wilcoxon_signed_rank,
+    holm_bonferroni,
+    format_stars,
+    interpret_cohens_d,
+    summarize_knob_significance,
+)
 
 # ── 全局字体: 英文 Times New Roman Bold ──────────────────────────
 mpl.rcParams['font.family'] = 'Times New Roman'
@@ -29,6 +37,8 @@ TORNADO_PERFORMANCE_METRICS = [
     'ES.culture.best_tgt_diff',
     'Change_area.real_metrics.iou',
     'Change_area.real_metrics.f1_score',
+    'Landscape.land.best_plan.CONTAG',
+    'Landscape.land.best_plan.SHEI',
 ]
 
 SENSITIVITY_METRICS = [
@@ -57,6 +67,12 @@ METRIC_DIRECTIONS = {
     'Change_area.real_metrics.f1_score': 'max',
     'Change_area.pred_metrics.iou': 'max',
     'Change_area.pred_metrics.f1_score': 'max',
+    'Landscape.land.best_plan.LPI': 'max',
+    'Landscape.land.best_plan.AI': 'max',
+    'Landscape.land.best_plan.ED': 'min',
+    'Landscape.land.best_plan.SHEI': 'min',
+    'Landscape.land.best_plan.SHDI': 'min',
+    'Landscape.land.best_plan.CONTAG': 'max',
     'FINAL.FOM': 'max',
     'FINAL.kappa': 'max',
 }
@@ -75,6 +91,12 @@ RUN_PERFORMANCE_METRICS = [
     'Change_area.real_metrics.f1_score',
     'Change_area.pred_metrics.iou',
     'Change_area.pred_metrics.f1_score',
+    'Landscape.land.best_plan.LPI',
+    'Landscape.land.best_plan.AI',
+    'Landscape.land.best_plan.ED',
+    'Landscape.land.best_plan.SHEI',
+    'Landscape.land.best_plan.SHDI',
+    'Landscape.land.best_plan.CONTAG',
     'FINAL.FOM',
     'FINAL.kappa',
 ]
@@ -176,14 +198,41 @@ def _format_range(lo: Any, hi: Any) -> str:
 # ============================================================
 # 1. Tornado: B_* 相对 A_baseline 的扰动
 # ============================================================
+def _calc_knob_significance(store: ExperimentResultStore,
+                            baseline_name: str,
+                            metric: str,
+                            prefix: str = 'B_') -> Dict[str, Dict[str, Any]]:
+    """计算每个 knob 的统计显著性 (取所有扰动值中最小校正 p 值和最大 |d|).
+
+    Returns
+    -------
+    {knob: {'min_p': ..., 'max_abs_d': ..., 'stars': ..., 'best_value': ...}}
+    """
+    base_idx, pert_idx = store.get_knob_paired_data(baseline_name, prefix=prefix, metric=metric)
+    if not base_idx:
+        return {}
+
+    sig = summarize_knob_significance(base_idx, pert_idx)
+    knob_sig: Dict[str, Dict[str, Any]] = {}
+    for knob, vmap in sig.items():
+        best = min(vmap.values(), key=lambda x: (x['p_value_corrected'] if x['p_value_corrected'] is not None else 1.0))
+        max_d_entry = max(vmap.values(), key=lambda x: abs(x['cohens_d']) if x['cohens_d'] is not None else 0.0)
+        knob_sig[knob] = {
+            'min_p': best['p_value_corrected'],
+            'max_abs_d': max_d_entry['cohens_d'],
+            'stars': best['stars'],
+            'best_value': best,
+        }
+    return knob_sig
+
+
 def plot_tornado(store: ExperimentResultStore,
                  baseline_name: str = 'A_baseline',
                  save_path: Optional[str] = None,
                  metric: str = 'ES.carbon.best_tgt_diff') -> Dict[str, Dict[str, float]]:
     """画 tornado 图: 每个 B_* knob 相对 baseline 的归一化扰动幅度.
 
-    默认批处理只使用方案层 performance 指标, 避免 final_best / 收敛时间等
-    受目标函数缩放或优化器控制参数直接影响的伪敏感指标.
+    增强: 叠加 Wilcoxon 校正 p 值和 Cohen's d 效应量标注.
     """
     experiment_root = store.experiment_root
     save_path = save_path or os.path.join(experiment_root, 'plots', f'tornado_{metric}.png')
@@ -199,6 +248,8 @@ def plot_tornado(store: ExperimentResultStore,
         print(f"警告: 无任何 B_* 实验数据可用, 跳过 tornado 绘图")
         return {}
 
+    knob_sig = _calc_knob_significance(store, baseline_name, metric, prefix='B_')
+
     knob_widths = []
     for knob, vmap in results.items():
         devs = list(vmap.values())
@@ -211,11 +262,35 @@ def plot_tornado(store: ExperimentResultStore,
 
     fig, ax = plt.subplots(figsize=(10, max(4, 0.5 * len(knobs_sorted))))
     y_pos = np.arange(len(knobs_sorted))
-    ax.barh(y_pos, np.array(maxs) - np.array(mins), left=mins,
-            color='steelblue', alpha=0.7, edgecolor='black')
+    bars = ax.barh(y_pos, np.array(maxs) - np.array(mins), left=mins,
+                   color='steelblue', alpha=0.7, edgecolor='black')
     ax.axvline(0, color='black', linewidth=0.8)
+
+    # 显著性标注: 显著参数用深色, 不显著用浅色
+    for i, (knob, _, _, _) in enumerate(knob_widths):
+        sig = knob_sig.get(knob, {})
+        stars = sig.get('stars', 'n.s.')
+        d = sig.get('max_abs_d')
+        d_str = f"d={d:.2f}" if d is not None and np.isfinite(d) else 'd=N/A'
+        label = f"{knob}  ({d_str} {stars})"
+        # 显著参数加深颜色
+        if stars in ('*', '**', '***'):
+            bars[i].set_color('steelblue')
+            bars[i].set_alpha(0.9)
+        else:
+            bars[i].set_color('lightsteelblue')
+            bars[i].set_alpha(0.5)
+
+    def _sig_label(knob: str) -> str:
+        sig = knob_sig.get(knob, {})
+        d = sig.get('max_abs_d')
+        stars = sig.get('stars', 'n.s.')
+        if d is not None and np.isfinite(d):
+            return f"{knob}  (d={d:.2f} {stars})"
+        return f"{knob}  (N/A)"
+
     ax.set_yticks(y_pos)
-    ax.set_yticklabels(knobs_sorted, fontsize=8)
+    ax.set_yticklabels([_sig_label(k[0]) for k in knob_widths], fontsize=8)
     ax.set_xlabel(f'normalized deviation of {metric}\n(perturbed - baseline) / |baseline|')
     ax.set_title(f'Tornado: plan-level sensitivity\nbaseline={baseline_name} ({metric}={baseline_val:.4f})')
     ax.grid(axis='x', linestyle='--', alpha=0.4)
@@ -502,6 +577,55 @@ def build_tornado_ranking_table(store: ExperimentResultStore,
     return _write_csv(save_path, rows, cols, 'tornado_ranking_table.csv')
 
 
+def build_tornado_significance_table(store: ExperimentResultStore,
+                                     baseline_name: str = 'A_baseline',
+                                     save_path: Optional[str] = None,
+                                     metrics: Optional[List[str]] = None,
+                                     alpha: float = 0.05) -> str:
+    """Tornado 表5: 参数显著性推断表 (Wilcoxon + Holm + Cohen's d).
+
+    对每个 metric 下的所有 (parameter, value) 组合做配对 Wilcoxon 检验,
+    并在该 metric 内部做 Holm-Bonferroni 校正.
+    """
+    experiment_root = store.experiment_root
+    save_path = save_path or os.path.join(experiment_root, 'plots', 'tornado_significance_table.csv')
+    metrics = metrics or TORNADO_PERFORMANCE_METRICS
+
+    rows: List[Dict[str, Any]] = []
+    for metric in metrics:
+        baseline_val = store.get_baseline_metric(baseline_name, metric)
+        if baseline_val is None or abs(baseline_val) < 1e-12:
+            continue
+
+        base_idx, pert_idx = store.get_knob_paired_data(
+            baseline_name, prefix='B_', metric=metric)
+        if not base_idx:
+            continue
+
+        sig = summarize_knob_significance(base_idx, pert_idx, alpha=alpha)
+
+        for knob, vmap in sig.items():
+            for val_str, info in vmap.items():
+                rows.append({
+                    'metric': metric,
+                    'parameter': knob,
+                    'value': val_str,
+                    'baseline': baseline_val,
+                    'cohens_d': round(info['cohens_d'], 4) if info['cohens_d'] is not None else '',
+                    'effect_size': info['effect_size'],
+                    'wilcoxon_statistic': round(info['wilcoxon_statistic'], 4) if info['wilcoxon_statistic'] is not None else '',
+                    'p_value_raw': (f"{info['p_value_raw']:.6f}" if info['p_value_raw'] is not None else ''),
+                    'p_value_corrected': (f"{info['p_value_corrected']:.6f}" if info['p_value_corrected'] is not None else ''),
+                    'stars': info['stars'],
+                })
+
+    rows.sort(key=lambda r: (r['metric'], r['parameter'], str(r['value'])))
+    cols = ['metric', 'parameter', 'value', 'baseline', 'cohens_d',
+            'effect_size', 'wilcoxon_statistic', 'p_value_raw',
+            'p_value_corrected', 'stars']
+    return _write_csv(save_path, rows, cols, 'tornado_significance_table.csv')
+
+
 def _run_tornado_postprocess(store: ExperimentResultStore,
                              baseline_name: str = 'A_baseline') -> None:
     """执行 tornado 表格、per-metric 图、composite 输出."""
@@ -511,6 +635,7 @@ def _run_tornado_postprocess(store: ExperimentResultStore,
         (build_tornado_mean_table, {}),
         (build_tornado_deviation_table, {'baseline_name': baseline_name}),
         (build_tornado_ranking_table, {'baseline_name': baseline_name}),
+        (build_tornado_significance_table, {'baseline_name': baseline_name}),
     ]:
         try:
             func(store, **kwargs)

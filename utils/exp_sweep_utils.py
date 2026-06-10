@@ -668,6 +668,50 @@ class ExperimentResultStore:
             results.setdefault(knob, {})[val_str] = deviation
         return results
 
+    def get_knob_paired_data(
+        self, baseline_name: str = 'A_baseline',
+        prefix: str = 'B_', metric: str = 'final_best',
+    ) -> Tuple[Dict[str, float], Dict[str, Dict[str, Dict[str, float]]]]:
+        """Tornado 配对数据: 返回 (baseline_by_index, perturbed_by_index).
+
+        baseline_by_index  : {index: baseline_sample_mean}
+        perturbed_by_index : {knob: {value_str: {index: perturbed_sample_mean}}}
+
+        配对设计: 同一个 index 上, baseline 的样本内均值 vs 扰动的样本内均值.
+        这样 baseline 不会被同一个 knob 的多个 value_str 重复累加.
+        """
+        baseline_dir = os.path.join(self._experiment_root, baseline_name)
+        extractor = _make_extractor(metric)
+
+        baseline_by_index: Dict[str, float] = {}
+        for idx in _list_samples(baseline_dir):
+            b_dirs = _list_run_dirs_for_sample(baseline_dir, idx)
+            b_vals = [v for v in (extractor(rd) for rd in b_dirs) if v is not None]
+            if b_vals:
+                baseline_by_index[idx] = float(np.mean(b_vals))
+
+        perturbed_by_index: Dict[str, Dict[str, Dict[str, float]]] = {}
+        for name in self.list_experiments(prefix=prefix):
+            if name == f'{prefix}baseline':
+                continue
+            rest = name[len(prefix):]
+            if '=' not in rest:
+                continue
+            knob, val_str = rest.rsplit('=', 1)
+            exp_dir = os.path.join(self._experiment_root, name)
+            if not os.path.isdir(exp_dir):
+                continue
+
+            for idx in _list_samples(exp_dir):
+                if idx not in baseline_by_index:
+                    continue
+                p_dirs = _list_run_dirs_for_sample(exp_dir, idx)
+                p_vals = [v for v in (extractor(rd) for rd in p_dirs) if v is not None]
+                if p_vals:
+                    perturbed_by_index.setdefault(knob, {}).setdefault(val_str, {})[idx] = float(np.mean(p_vals))
+
+        return baseline_by_index, perturbed_by_index
+
     def recompute_and_aggregate(self, exp_name: str, index: str) -> Dict[str, Any]:
         """重算 iter_to_95pct 并返回该样本的聚合指标."""
         exp_dir = os.path.join(self._experiment_root, exp_name)
