@@ -4,15 +4,31 @@ from typing import Dict, Any, List, Optional
 
 # Tornado 参数目录: (dotted_path, baseline, [perturbed_values], category)
 # category: 'score_cfg' -> 覆写 score_cfg.yaml; 'opt_cfg' -> 覆写 optimizerConfig.yaml 的 SA/GA 段
+#
+# 设计原则（本次聚焦算法超参数）:
+#   1. 排除 lambda_ES / lambda_LS / inside_reward_coef 等目标函数权重参数，
+#      避免用 ES 提升评判 ES 权重导致的循环论证。
+#   2. 加入 max_noimprove_iter — 它是 SA 实际的主导终止条件，对解质量影响极大。
+#   3. cooling_rate 范围要能在 1000 步内产生显著差异：
+#        0.995 -> T≈0.67,  0.998 -> T≈13.5,  0.9995 -> T≈60.6
+#      原范围 [0.999, 0.9998] 在 1000 步后分别约为 36.8 / 82.2，差异不够明显。
 _TORNADO_PARAMS = [
-    ('tgt_function.lambda_ES_high', 1000, [500, 1500, 2000], 'score_cfg'),
-    ('tgt_function.lambda_ES_low', 5000, [2500, 7500, 10000], 'score_cfg'),
-    ('tgt_function.lambda_LS_high', 5, [2, 8, 10], 'score_cfg'),
-    ('change_score.inside_reward_coef', 10, [5, 15, 20], 'score_cfg'),
-    ('runner_utils.sigmoid_threshold', 0.5, [0.3, 0.7], 'score_cfg'),
-    ('landscape.pure_base', 0.3, [0.1, 0.5], 'score_cfg'),
-    ('T_start', 100, [50, 200], 'opt_cfg'),
-    ('cooling_rate', 0.9995, [0.999, 0.9998], 'opt_cfg'),
+    # --- Round 1: 核心算法控制参数 ---
+    # 实际主导终止条件，预期效应最大
+    ('max_noimprove_iter', 1000, [500, 2000, 5000], 'opt_cfg'),
+
+    # 冗余安全机制，测试是否与 noimprove 有交互；只测两极节省时间
+    ('max_beststuck_iter', 3000, [1000, 6000], 'opt_cfg'),
+
+    # 初始温度；旧数据 [50,200] 效应低，加入 500 拉大跨度
+    ('T_start', 100, [50, 500], 'opt_cfg'),
+
+    # 降温率；新范围 [0.995, 0.998, 0.9995] 在 1000 步内差异显著
+    ('cooling_rate', 0.9995, [0.995, 0.998, 0.9995], 'opt_cfg'),
+
+    # [预留] v2 minimal 新增参数，当前主流程使用原版 landscape score，未启用
+    # ('landscape.pure_change', 0.2, [0.1, 0.3], 'score_cfg'),
+    # ('landscape.neighbor_weight', 1.0, [0.5, 1.5], 'score_cfg'),
 ]
 
 

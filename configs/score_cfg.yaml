@@ -20,6 +20,7 @@ runner_utils:
 landscape:
   pure_base: 0.3 # cal_landscape_score.py:93 的 (0.3 + change_ratio * 0.2)
   pure_change: 0.2
+  # neighbor_weight: 1.0 # [预留] v2 minimal 局部邻域聚合度惩罚权重，当前主流程使用原版 landscape score，未启用
 
 const:
   pixel_num_threshold_ischange: 30 # libs/const.py 的 PIXEL_NUM_THRESHOLD_ISCHANGE

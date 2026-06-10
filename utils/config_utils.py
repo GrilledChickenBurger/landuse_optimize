@@ -14,7 +14,7 @@ _DEFAULT_SCORE_CFG_DICT = {
         "lambda_ES_low": 5000,
         "lambda_LS_high": 5,
         "lambda_LS_low": 1,
-        "pixel_high": 6000,
+        "pixel_high": 2000,
         "pixel_low": 300,
     },
     "change_score": {
@@ -27,6 +27,7 @@ _DEFAULT_SCORE_CFG_DICT = {
     "landscape": {
         "pure_base": 0.3,
         "pure_change": 0.2,
+        # "neighbor_weight": 1.0,  # [预留] v2 minimal 用，当前主流程使用原版 landscape score，未启用
     },
     "const": {
         "pixel_num_threshold_ischange": 30,
