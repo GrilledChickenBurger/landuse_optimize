@@ -52,20 +52,20 @@ def run_get_changed_indices_pipeline():
 
 
 def _get_latest_experiment_dir(category: str = 'ablation') -> str:
-    """自动查找 results/<category>/ 下最新的时间戳目录."""
+    """自动查找 results/<category>/ 下最新的时间戳目录 (按目录名排序, 不受修改时间影响)."""
     experiment_root = os.path.join("results", category)
     if not os.path.exists(experiment_root):
         raise FileNotFoundError(f"未找到实验结果目录: {experiment_root}")
     dirs = [d for d in os.listdir(experiment_root) if os.path.isdir(os.path.join(experiment_root, d))]
     if not dirs:
         raise FileNotFoundError(f"实验结果目录为空: {experiment_root}")
-    dirs.sort(key=lambda d: os.path.getmtime(os.path.join(experiment_root, d)), reverse=True)
+    dirs.sort(reverse=True)  # 时间戳格式 yyyymmdd_HHMMSS 按字符串排序即按时间
     return os.path.join(experiment_root, dirs[0])
 
 
 def run_ablation_pipeline():
     """消融实验主线: 多次重复稳定性 + A/B/C 三组对比.
-    mode 可选: 'stability' 只跑 A_guided; 'ablation' 跑 A/B/C 三组.
+    mode 可选: 'stability' 只跑 baseline (完整方法); 'ablation' 跑 A/B/C 三组.
     样本来自 scripts/select_representative_samples.py 的输出.
     """
     import json as _json
@@ -80,7 +80,7 @@ def run_ablation_pipeline():
     ablation_pipeline(
         opt_cfg_path=os.path.join("configs","optimizerConfig.yaml"),
         score_cfg_path=os.path.join("configs","score_cfg.yaml"),
-        idxs=[1788, 698, 1723],
+        idxs=idxs,
         mode='stability',
         n_repeats=5,
     )

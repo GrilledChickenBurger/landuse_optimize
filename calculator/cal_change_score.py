@@ -15,7 +15,7 @@ from utils.tools import get_default_score_cfg
 
 def cal_quantity_value(cur_diff: torch.Tensor, target_n: int,
                        delta: float = 0.1, C: float = 4e5, power: float = 2) -> torch.Tensor:
-    """纯数量引导的变化得分（B_unguided 用）。
+    """纯数量引导的变化得分（A: 无空间约束 用）。
 
     返回值：标量，越大表示越差（需最小化）。
     ratio=1.0 时奖励最大 (-C)，死区外惩罚二次增长。
@@ -45,7 +45,7 @@ def cal_change_score(cur_diff: torch.Tensor, pred_diff: torch.Tensor, info_dict:
     cfg = score_cfg if score_cfg is not None else get_default_score_cfg()
 
     if cfg.ablation.disable_change_score:
-        # B_unguided：纯变化面积限制模式，只限制像素总数，不限位置
+        # A: 无空间约束：纯变化面积限制模式，只限制像素总数，不限位置
         target_n = torch.count_nonzero(pred_diff).item()
         C = getattr(cfg.ablation, 'quantity_penalty_C', 4e5)
         delta = getattr(cfg.ablation, 'quantity_penalty_delta', 0.1)

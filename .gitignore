@@ -24,6 +24,7 @@ results/
 .vscode/
 .idea/
 .venv/
+.claude/
 
 # 临时文件
 *.tmp
