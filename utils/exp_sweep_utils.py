@@ -9,11 +9,21 @@ from scipy import stats
 
 from utils.io_utils import ensure_folder
 
+# 元组: (目录名, 显示标签, 短标签, 颜色, 线型)
+# 目录名与磁盘目录一致（未重命名），显示标签反映新 ABC 语义
 ABLATION_GROUPS = [
-    ('A_guided', 'A: guided', 'A_guided', 'tab:blue', '-'),
-    ('B_unguided', 'B: unguided', 'B_unguided', 'tab:orange', '--'),
-    ('C_random', 'C: random', 'C_random', 'tab:green', ':'),
+    ('B_unguided', 'A: 无空间约束',   'A_none',   'tab:orange', '--'),
+    ('C_random',   'B: 随机区域约束', 'B_random', 'tab:green',  ':'),
+    ('A_guided',   'C: 完整方法',     'C_full',   'tab:blue',   '-'),
 ]
+
+# 从 ABLATION_GROUPS 派生的映射，供表格函数统一使用
+_DIR_TO_SHORT = {g[0]: g[2] for g in ABLATION_GROUPS}
+_DIR_TO_LABEL = {g[0]: g[1] for g in ABLATION_GROUPS}
+# baseline 目录名（完整方法，作为对比基准）
+_BASELINE_DIR = 'A_guided'
+# 对照目录名列表（与 baseline 对比的两组）
+_COMPARISON_DIRS = ['B_unguided', 'C_random']
 
 # ------------------------------------------------------------
 # 目录扫描（兼容新老结构）
@@ -104,6 +114,113 @@ def _read_nested(d: dict, dotted: str) -> Optional[float]:
         return float(cur)
     except (TypeError, ValueError):
         return None
+
+
+# ------------------------------------------------------------
+# 收敛曲线后处理工具
+# ------------------------------------------------------------
+def compute_best_so_far(series: np.ndarray, minimize: bool = True) -> np.ndarray:
+    """将当前解序列转换为 best-so-far 序列.
+
+    SA 为最小化问题, GA 为最大化问题 (fitness = -tgt_func).
+    """
+    series = np.asarray(series, dtype=float)
+    if minimize:
+        return np.minimum.accumulate(series)
+    return np.maximum.accumulate(series)
+
+
+def compute_normalized_improvement(
+    series: np.ndarray,
+    f_init: Optional[float] = None,
+    f_final: Optional[float] = None,
+    minimize: bool = True,
+) -> Tuple[np.ndarray, float, float]:
+    """计算归一化改善百分比序列.
+
+    公式: I(t) = (f_init - f_best(t)) / (f_init - f_final) * 100%
+
+    Parameters
+    ----------
+    series : np.ndarray
+        原始 total_score 序列 (当前解).
+    f_init : float, optional
+        初始解目标函数值. 若未提供, 用 best-so-far 第一个值近似
+        (要求后续实验在 convergence.json 中显式记录 initial_total_score).
+    f_final : float, optional
+        最终 best-so-far 值. 若未提供, 取 series 的 best-so-far 终点.
+    minimize : bool
+        True 为最小化问题 (SA), False 为最大化问题 (GA).
+
+    Returns
+    -------
+    improvement : np.ndarray
+        归一化改善百分比序列, 已 clip 到 [0, 100].
+    f_init_used : float
+        实际使用的初始值.
+    f_final_used : float
+        实际使用的最终值.
+    """
+    best = compute_best_so_far(series, minimize=minimize)
+    if f_final is None:
+        f_final = float(best[-1]) if len(best) else 0.0
+    if f_init is None:
+        f_init = float(best[0]) if len(best) else f_final
+
+    if minimize:
+        denom = f_init - f_final
+    else:
+        denom = f_final - f_init
+
+    if abs(denom) < 1e-12:
+        return np.zeros_like(best), f_init, f_final
+
+    if minimize:
+        imp = (f_init - best) / denom * 100.0
+    else:
+        imp = (best - f_init) / denom * 100.0
+    return np.clip(imp, 0.0, 100.0), f_init, f_final
+
+
+def compute_aocc(improvement: np.ndarray, max_pct: float = 100.0) -> float:
+    """计算 Area Over Convergence Curve (越小代表 anytime 性能越好).
+
+    对归一化改善百分比曲线, AOCC = mean(max_pct - improvement).
+    """
+    if len(improvement) == 0:
+        return float('nan')
+    return float(np.mean(max_pct - np.asarray(improvement, dtype=float)))
+
+
+def compute_fixed_budget(
+    improvement: np.ndarray,
+    budgets: List[int],
+) -> Dict[int, float]:
+    """提取固定预算点的归一化改善百分比."""
+    improvement = np.asarray(improvement, dtype=float)
+    result: Dict[int, float] = {}
+    for b in budgets:
+        if b < len(improvement):
+            result[b] = float(improvement[b])
+        elif len(improvement) > 0:
+            result[b] = float(improvement[-1])
+        else:
+            result[b] = 0.0
+    return result
+
+
+def compute_t95_from_improvement(
+    improvement: np.ndarray,
+    threshold: float = 95.0,
+) -> int:
+    """从归一化改善百分比序列计算首次达到 threshold 的迭代索引."""
+    improvement = np.asarray(improvement, dtype=float)
+    if len(improvement) == 0:
+        return -1
+    hits = improvement >= threshold
+    if not hits.any():
+        return -1
+    return int(np.argmax(hits))
 
 
 # ------------------------------------------------------------
