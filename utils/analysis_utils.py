@@ -9,6 +9,8 @@ from .dataset_utils import load_tiff
 from .visualize_utils import *
 from .tools import ensure_folder, visualize_tensor_list, find_valid_file
 
+setup_plot_fonts()
+
 
 def calculate_subplot_layout(num_items: int, max_cols: int = 3, max_rows: int = None, 
                             allow_overflow: bool = False) -> tuple:

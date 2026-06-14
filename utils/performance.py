@@ -11,7 +11,10 @@ from sklearn.metrics import confusion_matrix
 from calculator.cal_es_score import cal_es_value, get_es_cal_func_dict
 from utils.tools import ensure_folder
 from utils.dataset_utils import remove_lines, convert_to_nparray
+from utils.visualize_utils import setup_plot_fonts
 from libs.const import PIXEL_AREA_IN_HECTARES
+
+setup_plot_fonts()
 
 def calculate_FOM(ori, pred, true):
     """

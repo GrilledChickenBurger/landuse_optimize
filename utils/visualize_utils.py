@@ -8,13 +8,39 @@ import matplotlib.pyplot as plt
 
 from utils.tools import ensure_folder
 
-matplotlib.rcParams['font.sans-serif'] = ['serif', 'SimHei', 'SimSun']  # 设置中文字体为SimHei
-matplotlib.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
-# 设置数字使用英文字体
-matplotlib.rcParams['mathtext.fontset'] = 'stix'
-matplotlib.rcParams['mathtext.rm'] = 'Times New Roman'  # 常规数字
-matplotlib.rcParams['mathtext.it'] = 'Times New Roman:italic'  # 斜体数字
-matplotlib.rcParams['mathtext.bf'] = 'Times New Roman:bold'  # 粗体数字
+
+def setup_plot_fonts(base_size: float = 12,
+                     title_size: float = 14,
+                     label_size: float = 12,
+                     tick_size: float = 10,
+                     legend_size: float = 10,
+                     annot_size: float = 9):
+    """统一配置中英文混排字体：英文 Times New Roman Bold + 中文 SimHei/SimSun 回退。"""
+    matplotlib.rcParams['font.family'] = ['Times New Roman', 'SimHei', 'SimSun', 'serif']
+    matplotlib.rcParams['font.weight'] = 'bold'
+    matplotlib.rcParams['axes.unicode_minus'] = False
+    matplotlib.rcParams['mathtext.fontset'] = 'custom'
+    matplotlib.rcParams['mathtext.rm'] = 'Times New Roman'
+    matplotlib.rcParams['mathtext.bf'] = 'Times New Roman:bold'
+    matplotlib.rcParams['mathtext.it'] = 'Times New Roman:italic'
+    matplotlib.rcParams['axes.titlesize'] = title_size
+    matplotlib.rcParams['axes.labelsize'] = label_size
+    matplotlib.rcParams['xtick.labelsize'] = tick_size
+    matplotlib.rcParams['ytick.labelsize'] = tick_size
+    matplotlib.rcParams['legend.fontsize'] = legend_size
+    matplotlib.rcParams['figure.titlesize'] = title_size
+    return {
+        'base_size': base_size,
+        'title_size': title_size,
+        'label_size': label_size,
+        'tick_size': tick_size,
+        'legend_size': legend_size,
+        'annot_size': annot_size,
+    }
+
+
+# 模块导入时自动应用默认字体配置
+setup_plot_fonts()
 
 def color_bar_figure(x_labels: List[str], 
                     y_values: List[float], 
