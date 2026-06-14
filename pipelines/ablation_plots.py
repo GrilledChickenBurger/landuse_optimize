@@ -6,178 +6,100 @@ from typing import Dict, List, Optional, Any
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-import torch
 
-from libs.const import COLOR_MAP
-
-# ── 全局字体: 英文 Times New Roman Bold ──────────────────────────
-mpl.rcParams['font.family'] = 'Times New Roman'
-mpl.rcParams['font.weight'] = 'bold'
-mpl.rcParams['axes.unicode_minus'] = False
-mpl.rcParams['mathtext.fontset'] = 'custom'
-mpl.rcParams['mathtext.rm'] = 'Times New Roman'
-mpl.rcParams['mathtext.bf'] = 'Times New Roman:bold'
-mpl.rcParams['mathtext.it'] = 'Times New Roman:italic'
+# ── 全局字体: 英文 Times New Roman Bold + 中文回退 ──────────────
+from utils.visualize_utils import setup_plot_fonts
+setup_plot_fonts()
 # ──────────────────────────────────────────────────────────────────
 
 
-# Q1-Q5 背景色映射 (浅色, 从冷到暖)
+# Q1-Q5 背景色映射 (蓝→绿渐变, 总体淡雅)
 _LEVEL_COLORS = {
-    'Q1': '#deebf7',  # 浅蓝
-    'Q2': '#e5f5e0',  # 浅绿
-    'Q3': '#fff7bc',  # 浅黄
-    'Q4': '#fed9a6',  # 浅橙
-    'Q5': '#fcbba1',  # 浅红
+    'Q1': '#e8f4f8',  # 很浅蓝
+    'Q2': '#d4eaf0',  # 浅蓝
+    'Q3': '#c8e6d8',  # 蓝绿过渡
+    'Q4': '#bce4cc',  # 浅绿
+    'Q5': '#b0dcc0',  # 稍深绿(仍淡)
+}
+_LEVEL_TEXT_COLORS = {
+    'Q1': '#5a8aaa',
+    'Q2': '#4a7a9a',
+    'Q3': '#3a8a7a',
+    'Q4': '#2a7a6a',
+    'Q5': '#1a6a5a',
 }
 _LEVEL_ORDER = ['Q1', 'Q2', 'Q3', 'Q4', 'Q5']
 
-from utils.tools import ensure_folder, visualize_tensor_list
+
+def _draw_level_bands(ax, primary, n):
+    """在 ax 上绘制 Q1-Q5 背景色带."""
+    if 'level' not in primary.columns:
+        return False
+    for i in range(n):
+        lv = primary['level'].iloc[i]
+        color = _LEVEL_COLORS.get(str(lv), '#f5f5f5')
+        ax.axvspan(i - 0.5, i + 0.5, facecolor=color, edgecolor='none', zorder=0)
+    return True
+
+
+def _draw_level_labels(ax, primary, n):
+    """在背景色带垂直中心位置标注 Q1-Q5 文字."""
+    if 'level' not in primary.columns:
+        return
+    y_min, y_max = ax.get_ylim()
+    y_text = y_min + (y_max - y_min) * 0.6
+    for lv in _LEVEL_ORDER:
+        indices = [i for i in range(n) if str(primary['level'].iloc[i]) == lv]
+        if indices:
+            mid_x = np.mean(indices)
+            text_color = _LEVEL_TEXT_COLORS.get(lv, '#555555')
+            ax.text(mid_x, y_text, lv, ha='center', va='center',
+                    fontsize=11, color=text_color, fontweight='bold',
+                    alpha=0.7, zorder=5)
+
+
+def _set_bottom_center_legend(artist, ncol=None, handles=None, labels=None):
+    """统一图例风格：放在下方居中，x_label 之下，透明无边框。
+
+    Parameters
+    ----------
+    artist : Axes 或 Figure
+        需要添加图例的对象。Figure 时须显式传入 handles/labels。
+    ncol : int, optional
+        图例列数；默认根据条目数自动选择（最多 4 列）。
+    handles, labels : list, optional
+        用于 Figure.legend 的句柄与标签；对 Axes 可缺省，自动从 artist 获取。
+    """
+    if isinstance(artist, plt.Axes):
+        handles, labels = handles or artist.get_legend_handles_labels()
+        if not labels:
+            return
+        if ncol is None:
+            ncol = min(len(labels), 4)
+        artist.legend(handles, labels, loc='upper center',
+                      bbox_to_anchor=(0.5, -0.14), ncol=ncol,
+                      frameon=False)
+    else:  # Figure
+        if not labels:
+            return
+        if ncol is None:
+            ncol = min(len(labels), 4)
+        # 使用 figure 坐标，把图例放在底部留白区域内
+        artist.legend(handles, labels, loc='lower center',
+                      bbox_to_anchor=(0.5, 0.04), ncol=ncol,
+                      frameon=False)
+
+
+from utils.tools import ensure_folder
 from utils.exp_sweep_utils import (
     ABLATION_GROUPS,
+    _BASELINE_DIR,
     build_stability_table, build_ablation_compare_table,
     build_ablation_mean_table, build_ablation_improvement_table, build_ablation_summary_table,
     ExperimentResultStore,
     merge_stability_runs, build_stability_per_sample_csv, build_stability_summary_csv,
+    build_dar_matrix_csv, build_dar_summary_csv,
 )
-
-
-# ============================================================
-# 1. 收敛曲线: A_guided vs B_unguided (旧功能, 保留兼容)
-# ============================================================
-def plot_convergence(experiment_root: str,
-                     save_folder: Optional[str] = None,
-                     smooth_window: int = 20) -> None:
-    """对每个样本画 A_guided vs B_unguided 的 total_score 收敛曲线 (滑动平均).
-    每个样本可能有多 run, 此处取 run_0 的曲线作为代表.
-    """
-    save_folder = save_folder or os.path.join(experiment_root, 'plots')
-    ensure_folder(save_folder)
-
-    store = ExperimentResultStore(experiment_root)
-    samples_g = set(store.list_samples('A_guided'))
-    samples_u = set(store.list_samples('B_unguided'))
-    common = sorted(samples_g & samples_u)
-    if not common:
-        print(f"警告: A_guided / B_unguided 无共同样本, 跳过")
-        return
-
-    def _smooth(arr: np.ndarray, w: int) -> np.ndarray:
-        if w <= 1 or len(arr) <= w:
-            return arr
-        kernel = np.ones(w) / w
-        return np.convolve(arr, kernel, mode='valid')
-
-    for idx in common:
-        g_runs = store.list_run_dirs('A_guided', idx)
-        u_runs = store.list_run_dirs('B_unguided', idx)
-        if not (g_runs and u_runs):
-            continue
-        g_npy = os.path.join(g_runs[0], 'total_score_list.npy')
-        u_npy = os.path.join(u_runs[0], 'total_score_list.npy')
-        if not (os.path.exists(g_npy) and os.path.exists(u_npy)):
-            continue
-        g_arr = np.load(g_npy)
-        u_arr = np.load(u_npy)
-        g_sm = _smooth(g_arr, smooth_window)
-        u_sm = _smooth(u_arr, smooth_window)
-
-        fig, ax = plt.subplots(figsize=(8, 5))
-        ax.plot(np.arange(len(g_sm)), g_sm, label='guided', color='tab:blue')
-        ax.plot(np.arange(len(u_sm)), u_sm, label='unguided', color='tab:orange')
-        g_conv_path = os.path.join(g_runs[0], 'convergence.json')
-        if os.path.exists(g_conv_path):
-            with open(g_conv_path, 'r', encoding='utf-8') as f:
-                g_best = json.load(f).get('final_best')
-            if g_best is not None:
-                target = float(g_best) * 0.95 if float(g_best) < 0 else float(g_best) * 1.05
-                ax.axhline(target, linestyle='--', color='gray', alpha=0.6, label=f'95% best={target:.3f}')
-        ax.set_xlabel('iteration (smoothed)')
-        ax.set_ylabel('total_score (lower=better)')
-        ax.set_title(f'Convergence: {idx}')
-        ax.legend()
-        ax.grid(linestyle='--', alpha=0.4)
-        fig.tight_layout()
-        out = os.path.join(save_folder, f'convergence_{idx}.png')
-        fig.savefig(out, dpi=150)
-        plt.close(fig)
-        print(f"Convergence saved: {out}")
-
-
-# ============================================================
-# 2. LU 并排: ori / A_guided.best / B_unguided.best (旧功能, 保留兼容)
-# ============================================================
-def plot_lu_side_by_side(experiment_root: str,
-                         index: str,
-                         save_folder: Optional[str] = None) -> None:
-    """对指定样本画 ori_plan / guided best / unguided best 并排图."""
-    from utils.dataset_utils import remove_lines  # noqa
-    import rasterio
-
-    save_folder = save_folder or os.path.join(experiment_root, 'plots')
-    ensure_folder(save_folder)
-    idx_num = index.split('_')[1] if '_' in index else index
-
-    store = ExperimentResultStore(experiment_root)
-
-    def _read_tif(path: str) -> Optional[torch.Tensor]:
-        if not os.path.exists(path):
-            return None
-        try:
-            with rasterio.open(path) as src:
-                arr = src.read(1)
-            return torch.tensor(arr, dtype=torch.float32)
-        except Exception as e:
-            print(f"读取 {path} 失败: {e}")
-            return None
-
-    def _first_run_plan_dir(exp_name: str) -> Optional[str]:
-        runs = store.list_run_dirs(exp_name, index)
-        return os.path.join(runs[0], f'plans_{idx_num}') if runs else None
-
-    g_plan_dir = _first_run_plan_dir('A_guided')
-    u_plan_dir = _first_run_plan_dir('B_unguided')
-    ori = _read_tif(os.path.join(g_plan_dir, 'ori_plan.TIF')) if g_plan_dir else None
-    g_best = _read_tif(os.path.join(g_plan_dir, 'best_plan.TIF')) if g_plan_dir else None
-    u_best = _read_tif(os.path.join(u_plan_dir, 'best_plan.TIF')) if u_plan_dir else None
-
-    tensor_dict = {}
-    if ori is not None:
-        tensor_dict['ori_plan'] = ori
-    if g_best is not None:
-        tensor_dict['guided_best'] = g_best
-    if u_best is not None:
-        tensor_dict['unguided_best'] = u_best
-    if not tensor_dict:
-        print(f"警告: 样本 {index} 无可读 TIF, 跳过")
-        return
-
-    save_path = os.path.join(save_folder, f'lu_compare_{index}.png')
-    visualize_tensor_list(tensor_dict,
-                          main_title=f'LU compare: {index}',
-                          save_path=save_path,
-                          color_map=COLOR_MAP,
-                          figsize=(15, 5))
-    print(f"LU compare saved: {save_path}")
-
-
-# ============================================================
-# 主入口 (旧一站式, 保留向后兼容)
-# ============================================================
-def run_all_plots(experiment_root: str,
-                  baseline_name: str = 'A_guided',
-                  indexes_for_lu: Optional[List[str]] = None) -> None:
-    """[deprecated] 旧一站式入口: 跑 convergence + LU 并排."""
-    try:
-        plot_convergence(experiment_root)
-    except Exception as e:
-        print(f"convergence 失败: {e}")
-
-    if indexes_for_lu:
-        for idx in indexes_for_lu:
-            try:
-                plot_lu_side_by_side(experiment_root, idx)
-            except Exception as e:
-                print(f"LU compare [{idx}] 失败: {e}")
 
 
 # ============================================================
@@ -206,9 +128,10 @@ def plot_stability_convergence(store: ExperimentResultStore,
     ax.set_xlabel('iteration (smoothed)')
     ax.set_ylabel('total_score (lower=better)')
     ax.set_title(f'Stability: {index} (n={series.shape[0]} runs)')
-    ax.legend()
+    _set_bottom_center_legend(ax)
     ax.grid(linestyle='--', alpha=0.4)
     fig.tight_layout()
+    fig.subplots_adjust(bottom=0.20)
     ensure_folder(os.path.dirname(save_path))
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
@@ -252,9 +175,10 @@ def plot_stability_convergence_all_samples(store: ExperimentResultStore,
     n_runs_str = ','.join(str(n) for n in n_runs_list)
     ax.set_title(f'Stability across samples: {group_name} '
                  f'({runner_type.upper()}, {len(per_sample)} samples × {n_runs_str} runs)')
-    ax.legend(loc='best', fontsize=9, ncol=2)
+    _set_bottom_center_legend(ax, ncol=min(len(per_sample), 3))
     ax.grid(linestyle='--', alpha=0.4)
     fig.tight_layout()
+    fig.subplots_adjust(bottom=0.20)
     ensure_folder(os.path.dirname(save_path))
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
@@ -283,36 +207,125 @@ def plot_ablation_convergence(store: ExperimentResultStore,
     ax.set_xlabel('iteration (smoothed)')
     ax.set_ylabel('total_score (lower=better)')
     ax.set_title(f'Ablation convergence A/B/C: {idx}')
-    ax.legend()
+    _set_bottom_center_legend(ax)
     ax.grid(linestyle='--', alpha=0.4)
     fig.tight_layout()
+    fig.subplots_adjust(bottom=0.20)
     ensure_folder(os.path.dirname(save_path))
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
     print(f"  ablation_convergence saved: {save_path}")
 
 
-def plot_boxplot_final(store: ExperimentResultStore,
-                       save_path: str,
-                       metric: str = 'final_best') -> None:
-    """5 样本 × A/B/C 最终 F(S) 箱线图."""
-    from utils.visualize_utils import grouped_box_plot_figure
+def plot_ablation_convergence_normalized(store: ExperimentResultStore,
+                                         idx: str,
+                                         save_path: str,
+                                         smooth_window: int = 1,
+                                         max_iter: Optional[int] = None) -> None:
+    """A/B/C 三组单样本的归一化改善百分比收敛曲线对比.
 
-    sub = store.get_final_best_distribution()
-    if not sub:
-        print(f"  [boxplot] 无数据, 跳过")
-        return
+    Y 轴为 Normalized Improvement Percentage [0, 100], 95% 处画水平参考线,
+    并在 A/C 曲线穿过 95% 处标注 T95_best 竖线. B 不收敛则不标注.
+    """
+    fig, ax = plt.subplots(figsize=(9, 5))
 
-    data = {f'{metric} by sample × group': sub}
+    for g, label, _, color, ls in ABLATION_GROUPS:
+        series = store.get_improvement_series(g, idx, smooth_window=smooth_window)
+        if series is None:
+            continue
+        mean = series.mean(axis=0)
+        std = series.std(axis=0, ddof=1) if series.shape[0] >= 2 else np.zeros_like(mean)
+        x = np.arange(len(mean))
+        if max_iter is not None:
+            x = x[:max_iter]
+            mean = mean[:max_iter]
+            std = std[:max_iter]
+
+        ax.plot(x, mean, color=color, linestyle=ls, linewidth=2.0, label=label)
+        ax.fill_between(x, mean - std, mean + std, color=color, alpha=0.15)
+
+        agg = store.recompute_and_aggregate(g, idx)
+        iter_best = agg.get('iter_to_95pct_best', {}).get('mean')
+        if iter_best is not None and 0 < iter_best < len(x):
+            ax.axvline(iter_best, color=color, linestyle=ls, alpha=0.5, linewidth=1.2)
+            ax.text(iter_best, 100.5, f'{int(iter_best)}',
+                    color=color, fontsize=8, ha='center', va='bottom')
+
+    ax.axhline(95.0, color='gray', linestyle='--', linewidth=1.0, alpha=0.7, label='95%')
+    ax.set_xlabel('iteration')
+    ax.set_ylabel('normalized improvement (%)')
+    ax.set_title(f'Ablation convergence (normalized): {idx}')
+    ax.set_ylim(-5, 110)
+    _set_bottom_center_legend(ax)
+    ax.grid(linestyle='--', alpha=0.4)
+    fig.tight_layout()
+    fig.subplots_adjust(bottom=0.20)
     ensure_folder(os.path.dirname(save_path))
-    grouped_box_plot_figure(
-        data=data,
-        title=f'Ablation final F(S) distribution',
-        y_label=metric,
-        save_path=save_path,
-        figsize=(max(10, 2 * len(sub)), 6),
-    )
-    print(f"  boxplot saved: {save_path}")
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+    print(f"  ablation_convergence_normalized saved: {save_path}")
+
+
+def plot_ablation_convergence_normalized_all_samples(store: ExperimentResultStore,
+                                                     save_path: str,
+                                                     smooth_window: int = 1,
+                                                     max_iter: Optional[int] = None) -> None:
+    """所有样本的归一化改善百分比收敛曲线聚合到一张图.
+
+    每个 group 画一条跨样本均值曲线 + ±1 std 阴影.
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.set_facecolor('white')
+    for spine in ax.spines.values():
+        spine.set_color('black')
+    for g, label, _, color, ls in ABLATION_GROUPS:
+        all_means = []
+        sample_counts = []
+        max_len = 0
+        per_sample = {}
+        for idx in store.list_samples(g):
+            series = store.get_improvement_series(g, idx, smooth_window=smooth_window)
+            if series is None:
+                continue
+            mean = series.mean(axis=0)
+            if max_iter is not None:
+                mean = mean[:max_iter]
+            per_sample[idx] = mean
+            max_len = max(max_len, len(mean))
+            sample_counts.append(series.shape[0])
+        if not per_sample:
+            continue
+
+        # 对齐到 max_len
+        aligned = []
+        for m in per_sample.values():
+            if len(m) < max_len:
+                aligned.append(np.pad(m, (0, max_len - len(m)), mode='edge'))
+            else:
+                aligned.append(m[:max_len])
+        mat = np.stack(aligned, axis=0)
+        grand_mean = mat.mean(axis=0)
+        grand_std = mat.std(axis=0, ddof=1)
+        x = np.arange(max_len)
+
+        ax.plot(x, grand_mean, color=color, linestyle=ls, linewidth=2.0,
+                label=f'{label}')
+        ax.fill_between(x, grand_mean - grand_std, grand_mean + grand_std,
+                        color=color, alpha=0.15)
+
+    ax.axhline(95.0, color='gray', linestyle='--', linewidth=1.0, alpha=0.7, label='95%')
+    ax.set_xlabel('迭代次数')
+    ax.set_ylabel('归一化改善率 (%)')
+    ax.set_title('A/B/C 三组归一化收敛曲线（跨样本聚合）')
+    ax.set_ylim(-5, 110)
+    _set_bottom_center_legend(ax)
+    ax.grid(linestyle='--', alpha=0.25, color='#cccccc')
+    fig.tight_layout()
+    fig.subplots_adjust(bottom=0.20)
+    ensure_folder(os.path.dirname(save_path))
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+    print(f"  ablation_convergence_normalized_all saved: {save_path}")
 
 
 def plot_stability_cv_line(per_sample_csv_or_df,
@@ -348,16 +361,16 @@ def plot_stability_cv_line(per_sample_csv_or_df,
     # 根据指标选列和标签
     if metric == 'F(S)':
         cv_col = 'F_cv_pct'
-        ylabel = r'CV$_{F(S)}$ (%)'
-        title = r'SA vs GA stability: CV of $F(S)$ across samples'
+        ylabel = r'综合目标函数变异系数 CV (%)'
+        title = r'SA 与 GA 稳定性对比：综合目标函数'
     elif metric == 'ES':
         cv_col = 'ES_cv_pct'
-        ylabel = r'CV$_{\mathrm{ES}}$ (%)'
-        title = r'SA vs GA stability: CV of ES across samples'
+        ylabel = r'生态系统服务变异系数 CV (%)'
+        title = r'SA 与 GA 稳定性对比：生态系统服务'
     else:
         cv_col = 'RT_cv_pct'
-        ylabel = r'CV$_{\mathrm{Runtime}}$ (%)'
-        title = r'SA vs GA stability: CV of Runtime across samples'
+        ylabel = r'运行时间变异系数 CV (%)'
+        title = r'SA 与 GA 稳定性对比：运行时间'
 
     if df.empty or 'algorithm' not in df.columns or cv_col not in df.columns:
         print(f"  [cv_scatter] 缺 algorithm 或 {cv_col} 列, 跳过")
@@ -377,53 +390,38 @@ def plot_stability_cv_line(per_sample_csv_or_df,
     x_positions = np.arange(n)
 
     fig, ax = plt.subplots(figsize=figsize)
-    x_label = r'Sample (sorted by $n_{\mathrm{pred}}$)'
+    x_label = '样本（按 n_pred 升序）'
     markersize = 9
+    # 同指标内 SA/GA 使用相同 marker
+    marker = 'o' if metric in ('F(S)', 'Runtime') else '^'
 
-    # ── 按 level 画背景色带 ──────────────────────────────────────
-    has_level = 'level' in primary.columns
-    if has_level:
-        for i in range(n):
-            lv = primary['level'].iloc[i]
-            color = _LEVEL_COLORS.get(str(lv), '#f5f5f5')
-            ax.axvspan(i - 0.5, i + 0.5, facecolor=color, edgecolor='none',
-                       zorder=0)
+    # ── 背景色带 + Q1-Q5 标注 ────────────────────────────────────
+    has_level = _draw_level_bands(ax, primary, n)
+    # 先画散点让 autoscale 生效，再标注文字
 
     # ── SA 散点 ──────────────────────────────────────────────────
     if not sa.empty:
-        # SA 样本按 n_pred 排序后的位置
         sa_order = np.arange(len(sa))
         ax.scatter(sa_order, sa[cv_col].values,
                    color='tab:blue', label='SA', s=markersize**2,
-                   edgecolors='navy', linewidth=0.5, zorder=4)
+                   marker=marker, edgecolors='navy', linewidth=0.5, zorder=4)
 
     # ── GA 散点 ──────────────────────────────────────────────────
     if not ga.empty:
         ga_order = np.arange(len(ga))
         ax.scatter(ga_order, ga[cv_col].values,
                    color='tab:orange', label='GA', s=markersize**2,
-                   marker='s', edgecolors='darkorange', linewidth=0.5, zorder=4)
+                   marker=marker, edgecolors='darkorange', linewidth=0.5, zorder=4)
+
+    if has_level:
+        _draw_level_labels(ax, primary, n)
 
     # ── X 轴: S1..SN 短标签 ──────────────────────────────────────
     ax.set_xticks(x_positions)
-    ax.set_xticklabels([f'S{i + 1}' for i in range(n)],
-                       rotation=0, ha='center', fontsize=9)
+    ax.set_xticklabels([f'S{i + 1}' for i in range(n)], rotation=0, ha='center')
 
-    # ── Level 图例 ───────────────────────────────────────────────
-    if has_level:
-        from matplotlib.patches import Patch
-        present_levels = [lv for lv in _LEVEL_ORDER
-                          if str(lv) in primary['level'].values]
-        if present_levels:
-            legend_patches = [Patch(facecolor=_LEVEL_COLORS[lv], edgecolor='#cccccc',
-                                    label=f'{lv} (n_pred ↑)') for lv in present_levels]
-            leg1 = ax.legend(handles=legend_patches, loc='upper left',
-                             title='Level', fontsize=8, title_fontsize=9,
-                             framealpha=0.9)
-            ax.add_artist(leg1)
-
-    # ── SA/GA 图例 ───────────────────────────────────────────────
-    ax.legend(loc='upper right', fontsize=9, framealpha=0.9)
+    # ── SA/GA 图例: 下方居中, 位于 x_label 之下 ─────────────────
+    _set_bottom_center_legend(ax)
 
     ax.set_xlabel(x_label)
     ax.set_ylabel(ylabel)
@@ -433,10 +431,10 @@ def plot_stability_cv_line(per_sample_csv_or_df,
 
     # CV=5% 阈值水平线
     ax.axhline(y=5.0, color='gray', linestyle=':', alpha=0.6, linewidth=1.0)
-    ax.annotate('5%', xy=(0.98, 5.0), ha='right', va='bottom', fontsize=8,
+    ax.annotate('5%', xy=(0.98, 5.0), ha='right', va='bottom',
                 color='gray', xycoords=('axes fraction', 'data'))
 
-    fig.tight_layout()
+    fig.subplots_adjust(bottom=0.20)
     ensure_folder(os.path.dirname(save_path))
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
@@ -548,25 +546,22 @@ def plot_stability_boxplot(per_sample_csv_or_df,
 
     # 5% 参考线
     ax.axhline(y=5.0, color='gray', linestyle=':', alpha=0.6, linewidth=1.0)
-    ax.annotate('5%', xy=(0.98, 5.0), ha='right', va='bottom', fontsize=9,
+    ax.annotate('5%', xy=(0.98, 5.0), ha='right', va='bottom',
                 color='gray', xycoords=('axes fraction', 'data'))
 
     # x 轴: 中文标签, 水平不旋转
     x_labels = [m[3] for m in metrics_info]
     ax.set_xticks(x_positions)
-    ax.set_xticklabels(x_labels, rotation=0, fontsize=11)
+    ax.set_xticklabels(x_labels, rotation=0)
     ax.set_ylabel('变异系数 CV (%)')
-    ax.set_title(f'SA vs GA stability: CV distribution across {n_samples} samples')
+    ax.set_title(f'SA 与 GA 稳定性：跨样本变异系数分布（{n_samples} 个样本）')
 
-    # 图例 (手动构造)
-    ax.legend(
-        [bp_sa['boxes'][0], bp_ga['boxes'][0]],
-        ['SA', 'GA'],
-        loc='upper right',
-    )
+    # 图例 (透明背景, 下方居中)
+    _set_bottom_center_legend(ax)
     ax.grid(linestyle='--', alpha=0.4, axis='y')
 
     fig.tight_layout()
+    fig.subplots_adjust(bottom=0.20)
     ensure_folder(os.path.dirname(save_path))
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
