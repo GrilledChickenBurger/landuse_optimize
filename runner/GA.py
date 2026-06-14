@@ -285,8 +285,9 @@ class GeneticAlgorithm:
         self.max_gen = config.max_gen  # 最大迭代次数
         self.crossover_rate = config.crossover_rate  # 交叉率
         self.mutation_rate = config.mutation_rate  # 变异率
+        # strategy 延迟到 run() 中 build, 确保 opt_overrides (如 strategy.elite_ratio) 已生效
+        self.strategy_config = config.strategy
         self.elite_ratio = vars(config.strategy).get('elite_ratio', 0.1)  # 精英保留比例
-        self.strategy = GeneticAlgorithmStrategy(config.strategy).build()  # 策略, 包括select, crossover, mutation的具体实现方式
 
         # 流程提前结束条件
         if self.disable_early_stop:
@@ -698,6 +699,10 @@ class GeneticAlgorithm:
             return self.ori_plan
         
         print("================= GA Running... =================")
+
+        # 在覆写生效后 build strategy (opt_overrides 在 create_runner 前已应用到 config)
+        self.strategy = GeneticAlgorithmStrategy(self.strategy_config).build()
+        self.elite_ratio = vars(self.strategy_config).get('elite_ratio', 0.1)
 
         # 计时
         t0 = time.perf_counter()

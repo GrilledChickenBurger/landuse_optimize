@@ -59,6 +59,26 @@ _TORNADO_PARAMS = [
     # --- 搜索空间约束参数 ---
     # grid_num: pred_diff 网格划分数, 2→4格(搜索范围大), 8→64格(搜索范围小)
     ('runner_utils.grid_num', 4, [2, 8], 'score_cfg'),
+
+    # ===================== Round 3: GA 专用参数 (待执行, 10 样本) =====================
+    # 注意: GA strategy 参数 (strategy.*) 需要 GA.py 的 strategy 延迟 build 修复,
+    #       否则 opt_overrides 在 __init__ 之后才应用, strategy 已用旧值 build 完毕.
+    #
+    # --- 种群与进化控制 (optimizerConfig.yaml GA 段) ---
+    # 种群大小: 大→搜索多样性高但计算成本高, 小→快但易早熟
+    ('ori_pop_size', 20, [10, 30, 50], 'opt_cfg'),
+    # 交叉率: 控制父代基因交换概率, 低→更多随机扰动
+    ('crossover_rate', 0.8, [0.5, 0.9], 'opt_cfg'),
+    # 变异率: 控制个体扰动概率 (1.0=全部变异), 低→更依赖交叉
+    ('mutation_rate', 1.0, [0.5, 0.8], 'opt_cfg'),
+    # 无改进早停: 连续无改进代数, 小→早停快, 大→允许充分搜索
+    ('max_noimprove_gen', 80, [40, 150], 'opt_cfg'),
+
+    # --- 策略数值参数 (optimizerConfig.yaml GA.strategy 段, 仅调数值) ---
+    # 精英保留比例: 0=无精英(纯轮盘赌), 0.5=高选择压力
+    ('strategy.elite_ratio', 0.1, [0.0, 0.3, 0.5], 'opt_cfg'),
+    # 锦标赛规模: k越大→选择压力越强→收敛快但多样性低
+    ('strategy.tournament_k', 2, [3, 5], 'opt_cfg'),
 ]
 
 
