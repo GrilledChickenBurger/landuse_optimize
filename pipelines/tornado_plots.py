@@ -11,30 +11,18 @@ import matplotlib as mpl
 from utils.io_utils import ensure_folder
 from utils.exp_sweep_utils import ExperimentResultStore, aggregate_runs, _calc_metric_stats
 from utils.stats_utils import (
-    cohens_d,
-    wilcoxon_signed_rank,
-    holm_bonferroni,
-    format_stars,
-    interpret_cohens_d,
     summarize_knob_significance,
 )
 
-# ── 全局字体: 英文 Times New Roman Bold ──────────────────────────
-mpl.rcParams['font.family'] = 'Times New Roman'
-mpl.rcParams['font.weight'] = 'bold'
-mpl.rcParams['axes.unicode_minus'] = False
-mpl.rcParams['mathtext.fontset'] = 'custom'
-mpl.rcParams['mathtext.rm'] = 'Times New Roman'
-mpl.rcParams['mathtext.bf'] = 'Times New Roman:bold'
-mpl.rcParams['mathtext.it'] = 'Times New Roman:italic'
+# ── 全局字体: 英文 Times New Roman Bold + 中文回退 ──────────────
+from utils.visualize_utils import setup_plot_fonts
+setup_plot_fonts()
 # ──────────────────────────────────────────────────────────────────
 
 
 TORNADO_PERFORMANCE_METRICS = [
-    'ES.food.best_tgt_diff',
-    'ES.carbon.best_tgt_diff',
-    'ES.water.best_tgt_diff',
-    'ES.culture.best_tgt_diff',
+    # ES 改用目标函数的 es_score（convergence.json），替代 performance 中的各项 best_tgt_diff
+    'es_score',
     'Change_area.real_metrics.iou',
     'Change_area.real_metrics.f1_score',
     'Landscape.land.best_plan.CONTAG',
@@ -75,7 +63,31 @@ METRIC_DIRECTIONS = {
     'Landscape.land.best_plan.CONTAG': 'max',
     'FINAL.FOM': 'max',
     'FINAL.kappa': 'max',
+    'es_score': 'max',
 }
+
+# 代码内部参数名 → 正文符号的映射（用于 tornado 图 y 轴标签）
+_THESIS_PARAM_NAMES = {
+    # SA 专用参数
+    'cooling_rate':               r'$\beta$',
+    'T_start':                    r'$T_0$',
+    'max_noimprove_iter':         r'$N_{\mathrm{noimprove}}$',
+    'max_beststuck_iter':         r'$N_{\mathrm{beststuck}}$',
+    # 通用参数
+    'landscape.pure_base':        r'$\alpha_c$',
+    'change_score.inside_reward_coef': r'$\gamma_{change}$',
+    'tgt_function.lambda_ES_low': r'$\lambda_{ES}^{low}$',
+    'tgt_function.lambda_ES_high': r'$\lambda_{ES}^{high}$',
+    'tgt_function.lambda_LS_high': r'$\mu^{high}$',
+    'runner_utils.sigmoid_threshold': r'$\mu^{high}$',
+    'tgt_function.lambda_LS_low': r'$\mu^{low}$',
+}
+
+
+def _thesis_name(knob: str) -> str:
+    """返回参数在正文中的显示名称，未映射时回退为原始代码名。"""
+    return _THESIS_PARAM_NAMES.get(knob, knob)
+
 
 CONVERGENCE_METRICS = ['final_best', 'iter_to_95pct', 'wall_time_sec', 'total_iter', 'es_score']
 RUN_PERFORMANCE_METRICS = [
@@ -107,6 +119,8 @@ RUN_PERFORMANCE_METRICS = [
 # ============================================================
 def _metric_short_name(metric: str) -> str:
     """将 metric 名称压缩为适合图表显示的短名."""
+    if metric == 'es_score':
+        return 'ES Score'
     return (metric.replace('ES.', '')
             .replace('.best_ori_diff', '')
             .replace('.best_tgt_diff', '')
@@ -285,14 +299,15 @@ def plot_tornado(store: ExperimentResultStore,
         sig = knob_sig.get(knob, {})
         d = sig.get('max_abs_d')
         stars = sig.get('stars', 'n.s.')
+        name = _thesis_name(knob)
         if d is not None and np.isfinite(d):
-            return f"{knob}  (d={d:.2f} {stars})"
-        return f"{knob}  (N/A)"
+            return f"{name}  (d={d:.2f} {stars})"
+        return f"{name}  (N/A)"
 
     ax.set_yticks(y_pos)
-    ax.set_yticklabels([_sig_label(k[0]) for k in knob_widths], fontsize=8)
-    ax.set_xlabel(f'normalized deviation of {metric}\n(perturbed - baseline) / |baseline|')
-    ax.set_title(f'Tornado: plan-level sensitivity\nbaseline={baseline_name} ({metric}={baseline_val:.4f})')
+    ax.set_yticklabels([_sig_label(k[0]) for k in knob_widths], fontsize=11)
+    ax.set_xlabel(f'{_metric_short_name(metric)} 归一化偏差\n（扰动值 − 基线）/ |基线|', fontsize=12)
+    ax.set_title(f'参数敏感度（{_metric_short_name(metric)}）\n基线 = {baseline_val:.4f}', fontsize=13)
     ax.grid(axis='x', linestyle='--', alpha=0.4)
     fig.tight_layout()
     fig.savefig(save_path, dpi=150)
@@ -410,12 +425,12 @@ def plot_tornado_composite(store: ExperimentResultStore,
     y_pos = np.arange(len(knobs_sorted))
     ax.barh(y_pos, scores, color='steelblue', alpha=0.7, edgecolor='black')
     ax.set_yticks(y_pos)
-    ax.set_yticklabels(knobs_sorted, fontsize=8)
-    ax.set_xlabel('composite sensitivity score\n(equal-weight plan-level performance metrics)')
-    ax.set_title('Tornado: composite sensitivity ranking\n(performance metrics only)')
+    ax.set_yticklabels([_thesis_name(k) for k in knobs_sorted], fontsize=11)
+    ax.set_xlabel('综合敏感度得分（各指标等权）', fontsize=12)
+    ax.set_title('参数综合敏感度排名', fontsize=13)
     ax.grid(axis='x', linestyle='--', alpha=0.4)
     for i, score in enumerate(scores):
-        ax.text(score + 0.002, i, f'{score:.4f}', va='center', fontsize=7)
+        ax.text(score + 0.002, i, f'{score:.4f}', va='center', fontsize=9)
     fig.tight_layout()
     chart_path = os.path.join(save_dir, 'tornado_composite.png')
     fig.savefig(chart_path, dpi=150)
@@ -423,6 +438,126 @@ def plot_tornado_composite(store: ExperimentResultStore,
     print(f"Tornado composite chart saved: {chart_path}")
 
     return composite
+
+
+# 指标内部名 → 正文符号映射（用于热力图 x 轴标签）
+_THESIS_METRIC_NAMES = {
+    'es_score':                    r'$F_{eco}(S)$',
+    'Change_area.real_metrics.iou':  r'$\mathrm{IoU}_{real}$',
+    'Change_area.real_metrics.f1_score': r'$\mathrm{F1}_{real}$',
+    'Landscape.land.best_plan.CONTAG':  'CONTAG',
+    'Landscape.land.best_plan.SHEI':    'SHEI',
+}
+
+
+def _thesis_metric_name(metric: str) -> str:
+    """返回指标在正文中的显示名称，未映射时回退为短名。"""
+    return _THESIS_METRIC_NAMES.get(metric, _metric_short_name(metric))
+
+
+def plot_tornado_heatmap(store: ExperimentResultStore,
+                         baseline_name: str = 'A_baseline',
+                         save_path: Optional[str] = None,
+                         metrics: Optional[List[str]] = None,
+                         alpha: float = 0.05) -> None:
+    """Cohen's d 效应量热力图：行 = 参数扰动取值，列 = 评价指标。"""
+    experiment_root = store.experiment_root
+    metrics = metrics or TORNADO_PERFORMANCE_METRICS
+    save_path = save_path or os.path.join(experiment_root, 'plots', 'tornado_heatmap.png')
+    ensure_folder(os.path.dirname(save_path))
+
+    # 收集所有 (parameter, value) × metric 的 Cohen's d
+    data: Dict[str, Dict[str, float]] = {}
+    row_order: List[str] = []
+
+    for metric in metrics:
+        base_idx, pert_idx = store.get_knob_paired_data(
+            baseline_name, prefix='B_', metric=metric)
+        if not base_idx:
+            continue
+        sig = summarize_knob_significance(base_idx, pert_idx, alpha=alpha)
+        for knob, vmap in sig.items():
+            for val_str, info in vmap.items():
+                row_label = f"{_thesis_name(knob)}={val_str}"
+                if row_label not in data:
+                    data[row_label] = {}
+                    row_order.append(row_label)
+                if info['cohens_d'] is not None:
+                    data[row_label][metric] = info['cohens_d']
+
+    if not data:
+        print("  [heatmap] 无可用数据, 跳过")
+        return
+
+    # 组内按数值升序，组间保持原顺序
+    from collections import OrderedDict
+    groups: OrderedDict[str, List[str]] = OrderedDict()
+    for label in row_order:
+        name = label.rsplit('=', 1)[0] if '=' in label else label
+        groups.setdefault(name, []).append(label)
+    row_order = []
+    for name, labels in groups.items():
+        def _num_key(l):
+            val_str = l.rsplit('=', 1)[1] if '=' in l else '0'
+            try:
+                return float(val_str)
+            except ValueError:
+                return val_str
+        row_order.extend(sorted(labels, key=_num_key))
+
+    # 构建矩阵
+    n_rows = len(row_order)
+    n_cols = len(metrics)
+    matrix = np.full((n_rows, n_cols), np.nan)
+
+    for i, row_label in enumerate(row_order):
+        for j, metric in enumerate(metrics):
+            d_val = data[row_label].get(metric)
+            if d_val is not None and np.isfinite(d_val):
+                matrix[i, j] = d_val
+
+    # 输出矩阵 CSV
+    csv_path = save_path.rsplit('.', 1)[0] + '.csv'
+    with open(csv_path, 'w', encoding='utf-8', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['parameter_value'] + [_thesis_metric_name(m) for m in metrics])
+        for i, row_label in enumerate(row_order):
+            row_vals = [f'{matrix[i, j]:.4f}' if not np.isnan(matrix[i, j]) else '' for j in range(n_cols)]
+            writer.writerow([row_label] + row_vals)
+    print(f"Tornado heatmap CSV saved: {csv_path}")
+
+    # 颜色映射：红蓝渐变，负值偏蓝，正值偏红
+    abs_max = max(np.nanmax(np.abs(matrix)), 1.0)
+    cmap = plt.cm.RdBu_r
+
+    fig, ax = plt.subplots(figsize=(max(8, 1.6 * n_cols), max(4, 0.45 * n_rows)))
+    im = ax.imshow(matrix, cmap=cmap, vmin=-abs_max, vmax=abs_max, aspect='auto')
+    ax.grid(False)
+
+    # 刻度：x 轴用正文指标符号，y 轴用正文参数符号
+    ax.set_xticks(np.arange(n_cols))
+    ax.set_xticklabels([_thesis_metric_name(m) for m in metrics], fontsize=11)
+    ax.set_yticks(np.arange(n_rows))
+    ax.set_yticklabels(row_order, fontsize=10)
+
+    # 单元格文字：仅显示 d 值
+    for i in range(n_rows):
+        for j in range(n_cols):
+            val = matrix[i, j]
+            if np.isnan(val):
+                continue
+            color = 'white' if abs(val) > abs_max * 0.55 else 'black'
+            ax.text(j, i, f'{val:.2f}', ha='center', va='center', fontsize=9, color=color)
+
+    # 色标
+    cbar = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
+    cbar.set_label("Cohen's d", fontsize=11)
+
+    ax.set_title("参数扰动效应量热力图", fontsize=13)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Tornado heatmap saved: {save_path}")
 
 
 # ============================================================
@@ -654,6 +789,12 @@ def _run_tornado_postprocess(store: ExperimentResultStore,
         plot_tornado_composite(store, baseline_name=baseline_name)
     except Exception as e:
         print(f"Tornado composite 失败: {e}")
+
+    print("\n--- Tornado 效应量热力图 ---")
+    try:
+        plot_tornado_heatmap(store, baseline_name=baseline_name)
+    except Exception as e:
+        print(f"Tornado heatmap 失败: {e}")
 
 
 # ============================================================
