@@ -4,31 +4,61 @@ from typing import Dict, Any, List, Optional
 
 # Tornado 参数目录: (dotted_path, baseline, [perturbed_values], category)
 # category: 'score_cfg' -> 覆写 score_cfg.yaml; 'opt_cfg' -> 覆写 optimizerConfig.yaml 的 SA/GA 段
-#
-# 设计原则（本次聚焦算法超参数）:
-#   1. 排除 lambda_ES / lambda_LS / inside_reward_coef 等目标函数权重参数，
-#      避免用 ES 提升评判 ES 权重导致的循环论证。
-#   2. 加入 max_noimprove_iter — 它是 SA 实际的主导终止条件，对解质量影响极大。
-#   3. cooling_rate 范围要能在 1000 步内产生显著差异：
-#        0.995 -> T≈0.67,  0.998 -> T≈13.5,  0.9995 -> T≈60.6
-#      原范围 [0.999, 0.9998] 在 1000 步后分别约为 36.8 / 82.2，差异不够明显。
+
+# ===================== Round 1: SA 核心算法控制参数 (已完成 10 样本) =====================
+# _TORNADO_PARAMS_R1 = [
+#     # 实际主导终止条件，预期效应最大
+#     ('max_noimprove_iter', 1000, [500, 2000, 5000], 'opt_cfg'),
+#     # 冗余安全机制，测试是否与 noimprove 有交互；只测两极节省时间
+#     ('max_beststuck_iter', 3000, [1000, 6000], 'opt_cfg'),
+#     # 初始温度；旧数据 [50,200] 效应低，加入 500 拉大跨度
+#     ('T_start', 100, [50, 500], 'opt_cfg'),
+#     # 降温率；新范围 [0.995, 0.998, 0.9995] 在 1000 步内差异显著
+#     ('cooling_rate', 0.9995, [0.995, 0.998, 0.9995], 'opt_cfg'),
+# ]
+
+# ===================== Round 1: 通用参数初筛 (已完成 3 样本) =====================
+# _TORNADO_PARAMS_R1_GENERAL = [
+#     # lambda_ES: 1500 提升 ES (d=+0.99), 2000 反降; 2500 全面恶化, 7500 IoU/F1 大幅下降
+#     ('tgt_function.lambda_ES_high', 1000, [500, 1500, 2000], 'score_cfg'),
+#     ('tgt_function.lambda_ES_low', 5000, [2500, 7500, 10000], 'score_cfg'),
+#     # lambda_LS: 2~10 范围效应全是 negligible/small，被 λ_ES=1000 完全压制
+#     ('tgt_function.lambda_LS_high', 5, [2, 8, 10], 'score_cfg'),
+#     # pure_base: 0.5 时 IoU/F1 大幅下降 (d≈-0.99)
+#     ('landscape.pure_base', 0.3, [0.1, 0.5], 'score_cfg'),
+#     # inside_reward_coef: IoU/F1 中等效应，方向单调
+#     ('change_score.inside_reward_coef', 10, [5, 15, 20], 'score_cfg'),
+# ]
+
+# ===================== Round 2: 通用参数精筛 + 扩范围 (10 样本) =====================
+
 _TORNADO_PARAMS = [
-    # --- Round 1: 核心算法控制参数 ---
-    # 实际主导终止条件，预期效应最大
-    ('max_noimprove_iter', 1000, [500, 2000, 5000], 'opt_cfg'),
+    ('cooling_rate', 0.9995, [0.9998], 'opt_cfg'),
 
-    # 冗余安全机制，测试是否与 noimprove 有交互；只测两极节省时间
-    ('max_beststuck_iter', 3000, [1000, 6000], 'opt_cfg'),
+    # --- 目标函数权重参数 (保留 Round 1 有趋势的) ---
+    # lambda_ES_high: 1500 提升 ES (d=+0.99), 2000 反降 → 非单调, 值得验证
+    ('tgt_function.lambda_ES_high', 1000, [500, 1500, 2000], 'score_cfg'),
+    # lambda_ES_low: 2500/7500 导致 IoU/F1 大幅下降 (d≈-0.9~-1.0)
+    ('tgt_function.lambda_ES_low', 5000, [2500, 7500, 10000], 'score_cfg'),
+    # lambda_LS_high: Round 1 范围 [2,8,10] 效应太弱 (landscape 被 λ_ES 压制)
+    #   扩大到 [20,50,100], 使 λ_LS×landscape 占目标函数 10%~20%
+    ('tgt_function.lambda_LS_high', 5, [20, 50, 100], 'score_cfg'),
+    # lambda_LS_low: 新参数, 对 n_pred 小的样本 (44, 98) 插值到 low 值
+    ('tgt_function.lambda_LS_low', 1, [2, 5, 10], 'score_cfg'),
 
-    # 初始温度；旧数据 [50,200] 效应低，加入 500 拉大跨度
-    ('T_start', 100, [50, 500], 'opt_cfg'),
+    # --- 变化位置得分参数 (保留 Round 1 有趋势的) ---
+    # inside_reward_coef: IoU/F1 中等效应, 方向单调 (值越大 IoU 越低)
+    ('change_score.inside_reward_coef', 10, [5, 15, 20], 'score_cfg'),
 
-    # 降温率；新范围 [0.995, 0.998, 0.9995] 在 1000 步内差异显著
-    ('cooling_rate', 0.9995, [0.995, 0.998, 0.9995], 'opt_cfg'),
+    # --- 景观破碎化参数 ---
+    # pure_base: 0.5 时 IoU/F1 大幅下降 (d≈-0.99), 0.1 时中等下降
+    ('landscape.pure_base', 0.3, [0.1, 0.5], 'score_cfg'),
+    # pure_change: 新参数, 与 pure_base 配合: weight = pure_base + change_ratio × pure_change
+    ('landscape.pure_change', 0.2, [0.05, 0.1, 0.4], 'score_cfg'),
 
-    # [预留] v2 minimal 新增参数，当前主流程使用原版 landscape score，未启用
-    # ('landscape.pure_change', 0.2, [0.1, 0.3], 'score_cfg'),
-    # ('landscape.neighbor_weight', 1.0, [0.5, 1.5], 'score_cfg'),
+    # --- 搜索空间约束参数 ---
+    # grid_num: pred_diff 网格划分数, 2→4格(搜索范围大), 8→64格(搜索范围小)
+    ('runner_utils.grid_num', 4, [2, 8], 'score_cfg'),
 ]
 
 
