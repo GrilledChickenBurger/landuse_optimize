@@ -55,5 +55,3 @@ Thumbs.db
 *.rar
 
 # 本地其他文件
-# 1. 用于补充autodl无法完成的指标计算
-autodl_fix.py
