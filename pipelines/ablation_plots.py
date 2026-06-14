@@ -442,11 +442,144 @@ def plot_stability_cv_line(per_sample_csv_or_df,
 
 
 # ============================================================
+# stability 整合折线图: F(S) + ES 同图, 不同 marker 区分
+# ============================================================
+def plot_stability_cv_line_combined(per_sample_csv_or_df,
+                                     save_path: str,
+                                     figsize=None,
+                                     dual_panel: bool = True) -> None:
+    """整合 CV 散点图: 展示 F(S) 与 ES 的 SA/GA 对比.
+
+    Parameters
+    ----------
+    dual_panel : bool
+        True  -> 上下两个独立子图 (默认), 彻底避免双Y轴刻度误读;
+        False -> 单图双Y轴 (旧布局), 左轴F(S)右轴ES.
+    """
+    import pandas as pd
+
+    if isinstance(per_sample_csv_or_df, str):
+        if not os.path.isfile(per_sample_csv_or_df):
+            print(f"  [cv_combined] CSV 不存在: {per_sample_csv_or_df}, 跳过")
+            return
+        df = pd.read_csv(per_sample_csv_or_df)
+    else:
+        df = per_sample_csv_or_df
+
+    if df.empty or 'algorithm' not in df.columns:
+        print(f"  [cv_combined] 缺 algorithm 列, 跳过")
+        return
+
+    sa = df[df['algorithm'].str.upper() == 'SA'].sort_values('n_pred').copy()
+    ga = df[df['algorithm'].str.upper() == 'GA'].sort_values('n_pred').copy()
+    primary = sa if not sa.empty else ga
+    n = len(primary)
+    if n == 0:
+        print(f"  [cv_combined] 无有效数据, 跳过")
+        return
+
+    x_positions = np.arange(n)
+    if figsize is None:
+        figsize = (12, 7) if dual_panel else (12, 5)
+
+    # ── 创建画布 ─────────────────────────────────────────────────
+    if dual_panel:
+        fig, (ax1, ax2) = plt.subplots(
+            2, 1, figsize=figsize, sharex=True,
+            gridspec_kw={'height_ratios': [3, 1.5], 'hspace': 0.08}
+        )
+        ax_f, ax_e = ax1, ax2          # F(S) 上图, ES 下图
+    else:
+        fig, ax1 = plt.subplots(figsize=figsize)
+        ax2 = ax1.twinx()
+        ax_f, ax_e = ax1, ax2          # F(S) 左轴, ES 右轴
+
+    axes_for_band = [ax1, ax2] if dual_panel else [ax1]
+
+    # ── 背景色带 ─────────────────────────────────────────────────
+    has_level = _draw_level_bands(ax1, primary, n)
+    if dual_panel:
+        _draw_level_bands(ax2, primary, n)
+
+    # ── F(S) 散点 (统一用圆) ─────────────────────────────────────
+    if not sa.empty and 'F_cv_pct' in sa.columns:
+        ax_f.scatter(np.arange(len(sa)), sa['F_cv_pct'].values,
+                     color='tab:blue', marker='o', s=80,
+                     edgecolors='navy', linewidth=0.5, zorder=4,
+                     label='SA 综合目标函数')
+    if not ga.empty and 'F_cv_pct' in ga.columns:
+        ax_f.scatter(np.arange(len(ga)), ga['F_cv_pct'].values,
+                     color='tab:orange', marker='o', s=80,
+                     edgecolors='darkorange', linewidth=0.5, zorder=4,
+                     label='GA 综合目标函数')
+
+    # ── ES 散点 (统一用三角) ─────────────────────────────────────
+    if not sa.empty and 'ES_cv_pct' in sa.columns:
+        ax_e.scatter(np.arange(len(sa)), sa['ES_cv_pct'].values,
+                     color='tab:blue', marker='^', s=80,
+                     edgecolors='navy', linewidth=0.5, zorder=4,
+                     label='SA 生态系统服务')
+    if not ga.empty and 'ES_cv_pct' in ga.columns:
+        ax_e.scatter(np.arange(len(ga)), ga['ES_cv_pct'].values,
+                     color='tab:orange', marker='^', s=80,
+                     edgecolors='darkorange', linewidth=0.5, zorder=4,
+                     label='GA 生态系统服务')
+
+    # ── 在色带中间标注 Q1-Q5 ─────────────────────────────────────
+    if has_level:
+        _draw_level_labels(ax_f, primary, n)
+
+    # ── X 轴 ─────────────────────────────────────────────────────
+    ax_f.set_xticks(x_positions)
+    ax_f.set_xticklabels([f'S{i + 1}' for i in range(n)],
+                         rotation=0, ha='center')
+
+    # ── 图例: 下方居中, 位于 x_label 之下 ───────────────────────
+    lines_f, labels_f = ax_f.get_legend_handles_labels()
+    lines_e, labels_e = ax_e.get_legend_handles_labels()
+    _set_bottom_center_legend(fig, handles=lines_f + lines_e, labels=labels_f + labels_e)
+
+    # ── 标签与标题 ───────────────────────────────────────────────
+    if dual_panel:
+        ax_f.set_ylabel('综合目标函数 CV (%)')
+        ax_e.set_ylabel('生态系统服务 CV (%)')
+        ax_e.set_xlabel('样本（按 n_pred 升序）')
+        ax_f.set_title('SA 与 GA 稳定性对比：综合目标函数与生态系统服务')
+        ax_f.set_xlim(-0.7, n - 0.3)
+        ax_e.set_xlim(-0.7, n - 0.3)
+        ax_f.grid(axis='y', linestyle='--', alpha=0.4)
+        ax_e.grid(axis='y', linestyle='--', alpha=0.4)
+        # 5% 阈值线仅上图
+        ax_f.axhline(y=5.0, color='gray', linestyle=':', alpha=0.6, linewidth=1.0)
+        ax_f.annotate('5%', xy=(0.98, 5.0), ha='right', va='bottom',
+                      color='gray', xycoords=('axes fraction', 'data'))
+        fig.subplots_adjust(bottom=0.20)
+    else:
+        ax1.set_xlabel('样本（按 n_pred 升序）')
+        ax1.set_ylabel('综合目标函数 CV (%)', color='tab:blue')
+        ax2.set_ylabel('生态系统服务 CV (%)', color='tab:orange')
+        ax1.set_title('SA 与 GA 稳定性对比：综合目标函数与生态系统服务')
+        ax1.set_xlim(-0.7, n - 0.3)
+        ax1.grid(axis='y', linestyle='--', alpha=0.4)
+        # 5% 阈值线
+        ax1.axhline(y=5.0, color='gray', linestyle=':', alpha=0.6, linewidth=1.0)
+        ax1.annotate('5%', xy=(0.98, 5.0), ha='right', va='bottom',
+                      color='gray', xycoords=('axes fraction', 'data'))
+        fig.tight_layout()
+        fig.subplots_adjust(bottom=0.20)
+
+    ensure_folder(os.path.dirname(save_path))
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+    print(f"  stability_cv_combined saved: {save_path}")
+
+
+# ============================================================
 # stability 箱线图: 展示 N 个样本的 CV 分布 (stability.md §5.1)
 # ============================================================
 def plot_stability_boxplot(per_sample_csv_or_df,
                             save_path: str,
-                            show_runtime: bool = True,
+                            show_runtime: bool = False,
                             figsize=(10, 5)) -> None:
     """stability 箱线图: 横轴为指标 (F(S) / ES / 可选 Runtime), 每指标 SA vs GA 箱线, 叠加散点.
 
@@ -491,11 +624,11 @@ def plot_stability_boxplot(per_sample_csv_or_df,
 
     # 动态构建指标列表
     metrics_info = []
-    metrics_info.append(('F(S)', sa_f_cv, ga_f_cv, '综合目标函数变异系数'))
+    metrics_info.append(('F(S)', sa_f_cv, ga_f_cv, '综合目标函数'))
     if sa_es_cv.size > 0 or ga_es_cv.size > 0:
-        metrics_info.append(('ES', sa_es_cv, ga_es_cv, 'ES变异系数'))
+        metrics_info.append(('ES', sa_es_cv, ga_es_cv, '生态系统服务'))
     if show_runtime:
-        metrics_info.append(('Runtime', sa_rt_cv, ga_rt_cv, '运行时间变异系数'))
+        metrics_info.append(('Runtime', sa_rt_cv, ga_rt_cv, '运行时间'))
 
     n_metrics = len(metrics_info)
     x_positions = list(range(n_metrics))
@@ -723,6 +856,11 @@ def _run_combined_stability(experiment_root: str,
                     os.path.join(combined_plots_dir, 'stability_cv_line_rt.png'),
                     metric='Runtime',
                 )
+            # 整合折线图
+            plot_stability_cv_line_combined(
+                df_ps,
+                os.path.join(combined_plots_dir, 'stability_cv_line_combined.png'),
+            )
             # 箱线图
             plot_stability_boxplot(
                 df_ps,
@@ -750,7 +888,7 @@ def _run_combined_stability(experiment_root: str,
 def run_combined_stability_plots(experiment_root: str,
                                  sibling_experiment_roots: Optional[List[str]] = None,
                                  mode: str = 'auto',
-                                 show_runtime: bool = True) -> None:
+                                 show_runtime: bool = False) -> None:
     """合并多个已完成单算法后处理的 stability_runs.csv, 输出合并图表与汇总表.
 
     合并阶段只读取各 ``experiment_root/plots/stability_runs.csv``，不再隐式补跑
@@ -774,7 +912,7 @@ def run_all_ablation_plots(experiment_root: str,
                            groups_for_stability: Optional[List[str]] = None,
                            sibling_experiment_roots: Optional[List[str]] = None,
                            mode: str = 'auto',
-                           show_runtime: bool = True) -> None:
+                           show_runtime: bool = False) -> None:
     """一站式消融后处理: 稳定性叠图、A/B/C 收敛对比、箱线图和统计表.
 
     Parameters
@@ -825,12 +963,12 @@ def run_all_ablation_plots(experiment_root: str,
             except Exception as e:
                 print(f"  stability_conv_all [{g}] 失败: {e}")
 
-        # 2) 单样本稳定性详细图: 仅 A_guided
-        if os.path.isdir(os.path.join(experiment_root, 'A_guided')):
-            for idx in store.list_samples('A_guided'):
+        # 2) 单样本稳定性详细图: 仅 baseline (完整方法)
+        if os.path.isdir(os.path.join(experiment_root, _BASELINE_DIR)):
+            for idx in store.list_samples(_BASELINE_DIR):
                 try:
                     plot_stability_convergence(
-                        store, 'A_guided', idx,
+                        store, _BASELINE_DIR, idx,
                         os.path.join(plots_dir, f'stability_convergence_{idx}.png'))
                 except Exception as e:
                     print(f"  stability_conv [{idx}] 失败: {e}")
@@ -872,6 +1010,10 @@ def run_all_ablation_plots(experiment_root: str,
                             os.path.join(plots_dir, 'stability_cv_line_rt.png'),
                             metric='Runtime',
                         )
+                    plot_stability_cv_line_combined(
+                        df_ps,
+                        os.path.join(plots_dir, 'stability_cv_line_combined.png'),
+                    )
                     plot_stability_boxplot(
                         df_ps,
                         os.path.join(plots_dir, 'stability_boxplot.png'),
@@ -894,11 +1036,24 @@ def run_all_ablation_plots(experiment_root: str,
             except Exception as e:
                 print(f"  ablation_conv [{idx}] 失败: {e}")
 
-        # A/B/C 最终 F(S) 箱线图
+        # A/B/C 归一化改善百分比收敛对比 (核心图)
+        for idx in sorted(samples):
+            try:
+                plot_ablation_convergence_normalized(
+                    store, idx,
+                    os.path.join(plots_dir, f'ablation_convergence_norm_{idx}.png'),
+                    smooth_window=1)
+            except Exception as e:
+                print(f"  ablation_conv_norm [{idx}] 失败: {e}")
+
+        # 所有样本聚合归一化改善曲线
         try:
-            plot_boxplot_final(store, os.path.join(plots_dir, 'boxplot_final_f.png'), metric='final_best')
+            plot_ablation_convergence_normalized_all_samples(
+                store,
+                os.path.join(plots_dir, 'ablation_convergence_norm_all.png'),
+                smooth_window=1)
         except Exception as e:
-            print(f"  boxplot 失败: {e}")
+            print(f"  ablation_conv_norm_all 失败: {e}")
 
         # ablation 对比表
         try:
