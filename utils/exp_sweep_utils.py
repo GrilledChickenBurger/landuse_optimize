@@ -1317,3 +1317,267 @@ def build_stability_summary_csv(per_sample_df,
     out.to_csv(save_path, index=False)
     print(f"  stability_summary saved ({len(out)} rows): {save_path}")
     return out
+
+
+# ------------------------------------------------------------
+# DAR (Dimensional Attainment Rate) — 维度达标率矩阵
+# ------------------------------------------------------------
+_DAR_DIMS = ['food', 'carbon', 'water', 'culture']
+_DAR_DIM_LABELS = {'food': '粮食供给', 'carbon': '碳固定', 'water': '水源涵养', 'culture': '文化服务'}
+
+
+def _read_es_plans_from_perf(perf_path: str) -> Optional[Dict[str, Dict[str, float]]]:
+    """从 performance.json 读取各维度的 best_plan 和 tgt_plan.
+
+    Returns
+    -------
+    dict or None
+        {dim: {'best': float, 'tgt': float}} 或 None (文件不存在/格式错误).
+    """
+    if not os.path.exists(perf_path):
+        return None
+    try:
+        with open(perf_path, 'r', encoding='utf-8') as f:
+            perf = json.load(f)
+        es_data = perf.get('ES', {})
+        out = {}
+        for dim in _DAR_DIMS:
+            entry = es_data.get(dim, {})
+            best = entry.get('best_plan')
+            tgt = entry.get('tgt_plan')
+            if best is not None and tgt is not None:
+                out[dim] = {'best': float(best), 'tgt': float(tgt)}
+        return out if out else None
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+        return None
+
+
+def build_dar_detail_csv(exp_dir: str,
+                         run_start: int = 0,
+                         run_end: int = 4,
+                         save_path: Optional[str] = None) -> 'pd.DataFrame':
+    """Step 1-2: 逐 run 逐样本读取 performance.json, 输出 0/1 判断矩阵.
+
+    对每个样本的每次 run, 判断各维度 best_plan > tgt_plan, 记为 1, 否则 0.
+
+    Parameters
+    ----------
+    exp_dir : str
+        实验目录 (如 results/ablation/<ts>/A_guided).
+    run_start, run_end : int
+        run 范围, 默认 0-4 (R=5).
+    save_path : str or None
+        输出 CSV 路径, 默认 <exp_dir>/plots/dar_detail.csv.
+
+    Returns
+    -------
+    pd.DataFrame
+        列: sample_id, run, food_beat, carbon_beat, water_beat, culture_beat.
+    """
+    import pandas as pd
+
+    samples = _list_samples(exp_dir)
+    if not samples:
+        print(f"  [dar_detail] 未找到样本: {exp_dir}")
+        return pd.DataFrame(columns=['sample_id', 'run'] + [f'{d}_beat' for d in _DAR_DIMS])
+
+    rows = []
+    for idx in samples:
+        for r in range(run_start, run_end + 1):
+            rd = os.path.join(exp_dir, f'run_{r}', idx)
+            perf_path = os.path.join(rd, 'performance.json')
+            plans = _read_es_plans_from_perf(perf_path)
+            if plans is None:
+                continue
+            row = {'sample_id': idx, 'run': r}
+            for dim in _DAR_DIMS:
+                dim_data = plans.get(dim)
+                if dim_data is not None:
+                    row[f'{dim}_beat'] = int(dim_data['best'] > dim_data['tgt'])
+                else:
+                    row[f'{dim}_beat'] = ''
+            rows.append(row)
+
+    out = pd.DataFrame(rows)
+    if save_path is not None:
+        ensure_folder(os.path.dirname(save_path))
+        out.to_csv(save_path, index=False)
+        print(f"  dar_detail saved ({len(out)} rows): {save_path}")
+    return out
+
+
+def build_dar_matrix_csv(exp_dir: str,
+                         rep_json_path: Optional[str] = None,
+                         run_start: int = 0,
+                         run_end: int = 4,
+                         save_path: Optional[str] = None) -> 'pd.DataFrame':
+    """Step 3-4: 聚合 0/1 判断矩阵为 S×4 DAR 矩阵.
+
+    DAR_d = (1/R) * sum_{r} 1[best_plan_{r,d} > tgt_plan_d]
+
+    每个维度值范围为 [0, 1], 步长 1/R.
+    若提供 rep_json_path, 附加 n_pred / level 列.
+
+    Parameters
+    ----------
+    exp_dir : str
+        实验目录.
+    rep_json_path : str or None
+        representative_samples.json 路径, 用于获取 n_pred/level.
+    run_start, run_end : int
+        run 范围.
+    save_path : str or None
+        输出路径, 默认 <exp_dir>/plots/dar_matrix.csv.
+
+    Returns
+    -------
+    pd.DataFrame
+        列: sample_id, n_pred, level, n_runs, food_dar, carbon_dar, water_dar, culture_dar.
+    """
+    import pandas as pd
+
+    # 先不落盘 detail, 先算矩阵; 最终统一目录落盘
+    detail = build_dar_detail_csv(exp_dir, run_start, run_end, save_path=None)
+    if detail.empty:
+        return pd.DataFrame(
+            columns=['sample_id', 'n_pred', 'level', 'n_runs']
+            + [f'{d}_dar' for d in _DAR_DIMS])
+
+    # 加载 n_pred / level 映射
+    npred_map: Dict[str, int] = {}
+    q_ranges: List[Tuple[float, float]] = []
+    if rep_json_path and os.path.exists(rep_json_path):
+        npred_map, q_ranges = _load_representative_meta(rep_json_path)
+
+    rows = []
+    for sid, g in detail.groupby('sample_id', sort=False):
+        n_runs = len(g)
+        if n_runs == 0:
+            continue
+        n_pred = npred_map.get(sid, '')
+        level = _classify_level(n_pred, q_ranges) if isinstance(n_pred, int) else ''
+        row = {
+            'sample_id': sid,
+            'n_pred': n_pred if n_pred != '' else '',
+            'level': level,
+            'n_runs': n_runs,
+        }
+        for dim in _DAR_DIMS:
+            col = f'{dim}_beat'
+            if col in g.columns:
+                vals = g[col].dropna()
+                row[f'{dim}_dar'] = round(float(vals.mean()), 4) if len(vals) > 0 else ''
+            else:
+                row[f'{dim}_dar'] = ''
+        rows.append(row)
+
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out = out.sort_values(['n_pred', 'sample_id']).reset_index(drop=True)
+
+    if save_path is not None or not detail.empty:
+        save_path = save_path or os.path.join(exp_dir, 'plots', 'dar_matrix.csv')
+        ensure_folder(os.path.dirname(save_path))
+        out.to_csv(save_path, index=False)
+        print(f"  dar_matrix saved ({len(out)} rows): {save_path}")
+
+        # 将 detail 也落盘到 matrix 同目录, 方便后续合并
+        detail_save_path = os.path.join(os.path.dirname(save_path), 'dar_detail.csv')
+        detail.to_csv(detail_save_path, index=False)
+        print(f"  dar_detail saved ({len(detail)} rows): {detail_save_path}")
+    return out
+
+
+def build_dar_summary_csv(dar_matrix: 'pd.DataFrame',
+                          save_path: Optional[str] = None) -> 'pd.DataFrame':
+    """Step 5: 跨样本 DAR 汇总统计.
+
+    对每个维度计算 mean, std, min, max 并附加定性模式分类:
+      - DAR ≥ 0.8 → 稳定达标型
+      - DAR ≤ 0.2 → 系统未达标型
+      - 其他     → 方向不确定型
+
+    Parameters
+    ----------
+    dar_matrix : pd.DataFrame
+        build_dar_matrix_csv 的输出.
+    save_path : str or None
+        输出路径.
+
+    Returns
+    -------
+    pd.DataFrame
+        列: dimension, dimension_label, mean_dar, std_dar, min_dar, max_dar, qualitative_pattern.
+    """
+    import pandas as pd
+
+    if dar_matrix is None or dar_matrix.empty:
+        print(f"  [dar_summary] dar_matrix 为空, 跳过")
+        return pd.DataFrame(columns=[
+            'dimension', 'dimension_label', 'mean_dar', 'std_dar',
+            'min_dar', 'max_dar', 'qualitative_pattern'])
+
+    rows = []
+    for dim in _DAR_DIMS:
+        col = f'{dim}_dar'
+        if col not in dar_matrix.columns:
+            continue
+        vals = dar_matrix[col].dropna().astype(float).values
+        if len(vals) == 0:
+            continue
+        mean_val = float(np.mean(vals))
+        std_val = float(np.std(vals, ddof=1)) if len(vals) >= 2 else 0.0
+        min_val = float(np.min(vals))
+        max_val = float(np.max(vals))
+
+        if mean_val >= 0.8:
+            pattern = '稳定达标型'
+        elif mean_val <= 0.2:
+            pattern = '系统未达标型'
+        else:
+            pattern = '方向不确定型'
+
+        rows.append({
+            'dimension': dim,
+            'dimension_label': _DAR_DIM_LABELS.get(dim, dim),
+            'mean_dar': round(mean_val, 4),
+            'std_dar': round(std_val, 4),
+            'min_dar': round(min_val, 4),
+            'max_dar': round(max_val, 4),
+            'qualitative_pattern': pattern,
+        })
+
+    out = pd.DataFrame(rows)
+    if save_path is not None:
+        ensure_folder(os.path.dirname(save_path))
+        out.to_csv(save_path, index=False)
+        print(f"  dar_summary saved ({len(out)} rows): {save_path}")
+    return out
+
+
+def build_dar_all(exp_dir: str,
+                  rep_json_path: Optional[str] = None,
+                  run_start: int = 0,
+                  run_end: int = 4,
+                  output_dir: Optional[str] = None) -> Dict[str, 'pd.DataFrame']:
+    """一键生成 DAR 三张表 (detail / matrix / summary).
+
+    内部 build_dar_matrix_csv 会顺带生成 dar_detail.csv,
+    本函数仅额外单独调用 build_dar_summary_csv 完成汇总.
+    """
+    output_dir = output_dir or os.path.join(exp_dir, 'plots')
+    ensure_folder(output_dir)
+
+    matrix = build_dar_matrix_csv(
+        exp_dir, rep_json_path, run_start, run_end,
+        save_path=os.path.join(output_dir, 'dar_matrix.csv'),
+    )
+    summary = build_dar_summary_csv(
+        matrix,
+        save_path=os.path.join(output_dir, 'dar_summary.csv'),
+    )
+    # 读取已落盘的 detail (由 build_dar_matrix_csv 内部生成)
+    import pandas as pd
+    detail_path = os.path.join(output_dir, 'dar_detail.csv')
+    detail = pd.read_csv(detail_path) if os.path.exists(detail_path) else pd.DataFrame()
+    return {'detail': detail, 'matrix': matrix, 'summary': summary}
