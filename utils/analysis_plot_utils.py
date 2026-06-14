@@ -35,14 +35,11 @@ from utils.analysis_utils import (
     visualize_by_type_bars,
 )
 from utils.tools import ensure_folder
-from utils.visualize_utils import grouped_bar_figure, grouped_box_plot_figure
+from utils.visualize_utils import grouped_bar_figure, grouped_box_plot_figure, setup_plot_fonts
 
 
 def setup_result_plot_style(font_family: str = "Times New Roman"):
-    plt.rcParams['font.family'] = font_family
-    plt.rcParams['font.sans-serif'] = [font_family, 'SimHei', 'SimSun', 'serif']
-    plt.rcParams['font.weight'] = 'bold'
-    plt.rcParams['axes.unicode_minus'] = False
+    setup_plot_fonts()
 
 
 def _zh_font(size=None):
