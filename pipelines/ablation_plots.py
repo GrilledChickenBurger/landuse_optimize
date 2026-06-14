@@ -781,9 +781,55 @@ def _build_combined_folder_path(experiment_root: str,
     return os.path.join(parent, combined_name)
 
 
+def _get_algorithm_label(experiment_root: str) -> str:
+    """从 experiment_summary.json 读取 runner_type 作为算法标识.
+
+    找不到时返回目录名最后一段 (timestamp) 作为 fallback.
+    """
+    summary_path = os.path.join(experiment_root, 'experiment_summary.json')
+    if os.path.exists(summary_path):
+        try:
+            with open(summary_path, 'r', encoding='utf-8') as f:
+                return json.load(f).get('runner_type', 'SA').upper()
+        except Exception:
+            pass
+    return os.path.basename(experiment_root.rstrip('/\\'))
+
+
+def _merge_dar_tables(all_roots: List[str],
+                      combined_plots_dir: str) -> None:
+    """合并 SA 和 GA 各自已生成的 DAR 三张表, 加 algorithm 列后拼接写入合并目录.
+
+    对 dar_detail.csv / dar_matrix.csv / dar_summary.csv 分别处理:
+    若某 root 下缺少对应文件则跳过该 root.
+    """
+    dar_files = ['dar_detail.csv', 'dar_matrix.csv', 'dar_summary.csv']
+    for dar_file in dar_files:
+        frames = []
+        for root in all_roots:
+            path = os.path.join(root, 'plots', dar_file)
+            if not os.path.exists(path):
+                print(f"  [combined] DAR 文件缺失, 跳过: {path}")
+                continue
+            try:
+                import pandas as pd
+                df = pd.read_csv(path)
+                df.insert(0, 'algorithm', _get_algorithm_label(root))
+                frames.append(df)
+            except Exception as e:
+                print(f"  [combined] 读取 DAR 文件失败: {path}: {e}")
+        if frames:
+            combined = pd.concat(frames, ignore_index=True)
+            save_path = os.path.join(combined_plots_dir, dar_file)
+            combined.to_csv(save_path, index=False)
+            print(f"  [combined] DAR 合并 ({len(frames)} 来源): {save_path}")
+        else:
+            print(f"  [combined] DAR 合并跳过: 无可用 {dar_file}")
+
+
 def _run_combined_stability(experiment_root: str,
                              sibling_experiment_roots: List[str],
-                             show_runtime: bool = True,
+                             show_runtime: bool = False,
                              mode: str = 'auto') -> None:
     """SA+GA 合并后处理: 产出合并目录下的 CSV + 图表 + combined_meta.json.
 
@@ -879,6 +925,12 @@ def _run_combined_stability(experiment_root: str,
         meta_path = os.path.join(combined_root, 'combined_meta.json')
         with open(meta_path, 'w', encoding='utf-8') as f:
             json.dump(combined_meta, f, indent=2, ensure_ascii=False)
+
+        # 合并 DAR 三张表: 读 SA/GA 各自的 dar_*.csv, 加 algorithm 列后拼接
+        _merge_dar_tables(
+            all_roots=all_roots,
+            combined_plots_dir=combined_plots_dir,
+        )
 
         print(f"  [combined] SA+GA 合并输出保存: {combined_root}")
     except Exception as e:
@@ -1022,9 +1074,32 @@ def run_all_ablation_plots(experiment_root: str,
         except Exception as e:
             print(f"  单算法 stability per_sample/summary/cv/boxplot 失败: {e}")
 
+        # DAR (维度达标率矩阵): 仅对 baseline (完整方法) 计算
+        try:
+            baseline_dir = os.path.join(experiment_root, _BASELINE_DIR)
+            if os.path.isdir(baseline_dir):
+                rep_json_path = os.path.join(experiment_root, 'representative_samples.json')
+                if not os.path.exists(rep_json_path):
+                    rep_json_path = None
+                build_dar_matrix_csv(
+                    baseline_dir,
+                    rep_json_path=rep_json_path,
+                    run_start=0, run_end=4,
+                    save_path=os.path.join(plots_dir, 'dar_matrix.csv'),
+                )
+                # 读取 dar_matrix 用于汇总 (避免重复读取 detail)
+                import pandas as pd
+                dar_matrix = pd.read_csv(os.path.join(plots_dir, 'dar_matrix.csv'))
+                build_dar_summary_csv(
+                    dar_matrix,
+                    save_path=os.path.join(plots_dir, 'dar_summary.csv'),
+                )
+        except Exception as e:
+            print(f"  DAR 矩阵生成失败: {e}")
+
     # ====== ablation 分支 ======
     if 'ablation' in branches:
-        # A/B/C 收敛对比
+        # A/B/C 收敛对比 (raw total_score)
         samples = set()
         for g in groups_for_stability:
             samples.update(store.list_samples(g))
