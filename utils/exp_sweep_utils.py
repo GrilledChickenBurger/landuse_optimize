@@ -247,19 +247,20 @@ def _aggregate_exp(exp_dir: str, metric_extractor) -> Optional[float]:
 
 def _make_extractor(metric: str):
     """根据 metric 名称返回提取器函数 extractor(run_dir) -> float|None."""
-    if metric == 'final_best':
-        return lambda d: _read_conv_metric(os.path.join(d, 'convergence.json'), 'final_best')
-    elif metric == 'wall_time_sec':
-        return lambda d: _read_conv_metric(os.path.join(d, 'convergence.json'), 'wall_time_sec')
-    elif metric == 'iter_to_95pct':
-        return lambda d: _read_conv_metric(os.path.join(d, 'convergence.json'), 'iter_to_95pct')
+    # convergence.json 指标
+    if metric in ('final_best', 'wall_time_sec', 'iter_to_95pct', 'es_score',
+                  'total_iter', 'iter_to_95pct_best', 'aocc',
+                  'fixed_budget_1000', 'fixed_budget_5000'):
+        return lambda d, m=metric: _read_conv_metric(
+            os.path.join(d, 'convergence.json'), m)
     else:
         path = metric.split('.')
         return lambda d: _read_perf_metric(
             os.path.join(d, 'performance.json'), path)
 
 
-_METRIC_KEYS_CONV = ['final_best', 'iter_to_95pct', 'wall_time_sec', 'total_iter', 'es_score']
+_METRIC_KEYS_CONV = ['final_best', 'iter_to_95pct', 'wall_time_sec', 'total_iter', 'es_score',
+                     'iter_to_95pct_best', 'aocc', 'fixed_budget_1000', 'fixed_budget_5000']
 _METRIC_KEYS_PERF = [
     'ES.food.best_ori_diff', 'ES.carbon.best_ori_diff',
     'ES.water.best_ori_diff', 'ES.culture.best_ori_diff',
@@ -268,6 +269,8 @@ _METRIC_KEYS_PERF = [
     'Change_area.real_metrics.iou', 'Change_area.real_metrics.f1_score',
     'Change_area.pred_metrics.iou', 'Change_area.pred_metrics.f1_score',
     'FINAL.FOM', 'FINAL.kappa',
+    # 景观格局指标：用于 ablation A/B/C 景观差异分析
+    'Landscape.land.best_plan.CONTAG', 'Landscape.land.best_plan.SHEI',
 ]
 
 
@@ -327,9 +330,16 @@ def aggregate_runs(exp_dir: str, index: str) -> Dict[str, Dict[str, Any]]:
 
 
 def recompute_iter_to_95pct(exp_dir: str, index: str) -> None:
-    """用多次 final_best 均值作为参考最优, 重算每次 run 的 iter_to_95pct_repeat."""
+    """用多次 final_best 均值作为参考最优, 重算每次 run 的 iter_to_95pct_repeat.
+
+    同时基于 best-so-far 序列计算:
+      - iter_to_95pct_best: 首次达到 95% 改善的迭代 (基于 best-so-far, 更稳定)
+      - aocc: Area Over Convergence Curve
+      - fixed_budget_{T}: 固定预算 T 处的归一化改善百分比
+      - improvement_npy: 归一化改善百分比序列文件路径
+    """
     run_dirs = _list_run_dirs_for_sample(exp_dir, index)
-    if len(run_dirs) < 2:
+    if len(run_dirs) < 1:
         return
     finals = []
     for rd in run_dirs:
@@ -352,39 +362,65 @@ def recompute_iter_to_95pct(exp_dir: str, index: str) -> None:
             summary = json.load(f)
         runner_type = summary.get('runner_type', 'SA').upper()
 
-    if runner_type == 'SA':
+    minimize = runner_type == 'SA'
+
+    if minimize:
         target = ref_best * 1.05 if ref_best >= 0 else ref_best * 0.95
-        for rd in run_dirs:
-            npy_p = os.path.join(rd, 'total_score_list.npy')
-            conv_p = os.path.join(rd, 'convergence.json')
-            if not (os.path.exists(npy_p) and os.path.exists(conv_p)):
-                continue
-            arr = np.load(npy_p)
-            hit = (arr <= target).any()
-            iter_repeat = int(np.argmax(arr <= target)) if hit else -1
-            with open(conv_p, 'r', encoding='utf-8') as f:
-                conv = json.load(f)
-            conv['iter_to_95pct_repeat'] = iter_repeat
-            conv['ref_best_repeat'] = ref_best
-            with open(conv_p, 'w', encoding='utf-8') as f:
-                json.dump(conv, f, indent=2, ensure_ascii=False)
     else:
         ref_best_fitness = -ref_best
         target = ref_best_fitness * 0.95 if ref_best_fitness >= 0 else ref_best_fitness * 1.05
-        for rd in run_dirs:
-            npy_p = os.path.join(rd, 'total_score_list.npy')
-            conv_p = os.path.join(rd, 'convergence.json')
-            if not (os.path.exists(npy_p) and os.path.exists(conv_p)):
-                continue
-            arr = np.load(npy_p)
+
+    fixed_budgets = [1000, 5000]
+
+    for rd in run_dirs:
+        npy_p = os.path.join(rd, 'total_score_list.npy')
+        conv_p = os.path.join(rd, 'convergence.json')
+        if not (os.path.exists(npy_p) and os.path.exists(conv_p)):
+            continue
+        arr = np.load(npy_p)
+
+        with open(conv_p, 'r', encoding='utf-8') as f:
+            conv = json.load(f)
+
+        # 兼容: 若已有 initial_total_score 则用其作为 f_init, 否则用 best-so-far 首值近似
+        f_init = conv.get('initial_total_score')
+        f_final = conv.get('final_best')
+        improvement, f_init_used, f_final_used = compute_normalized_improvement(
+            arr, f_init=f_init, f_final=f_final, minimize=minimize)
+
+        # 保存归一化改善百分比序列 (后处理绘图用)
+        imp_path = os.path.join(rd, 'improvement.npy')
+        np.save(imp_path, improvement)
+
+        # 基于 best-so-far 的 T95
+        iter_best = compute_t95_from_improvement(improvement, threshold=95.0)
+
+        # AOCC
+        aocc = compute_aocc(improvement)
+
+        # 固定预算
+        fb = compute_fixed_budget(improvement, fixed_budgets)
+
+        # 旧逻辑: 基于当前解序列的 iter_to_95pct_repeat (保留以兼容旧表)
+        if minimize:
+            hit = (arr <= target).any()
+            iter_repeat = int(np.argmax(arr <= target)) if hit else -1
+        else:
             hit = (arr >= target).any()
             iter_repeat = int(np.argmax(arr >= target)) if hit else -1
-            with open(conv_p, 'r', encoding='utf-8') as f:
-                conv = json.load(f)
-            conv['iter_to_95pct_repeat'] = iter_repeat
-            conv['ref_best_repeat'] = ref_best
-            with open(conv_p, 'w', encoding='utf-8') as f:
-                json.dump(conv, f, indent=2, ensure_ascii=False)
+
+        conv['iter_to_95pct_repeat'] = iter_repeat
+        conv['ref_best_repeat'] = ref_best
+        conv['iter_to_95pct_best'] = iter_best
+        conv['aocc'] = aocc
+        for b in fixed_budgets:
+            conv[f'fixed_budget_{b}'] = fb[b]
+        conv['f_init_used'] = f_init_used
+        conv['f_final_used'] = f_final_used
+        conv['improvement_npy'] = os.path.basename(imp_path)
+
+        with open(conv_p, 'w', encoding='utf-8') as f:
+            json.dump(conv, f, indent=2, ensure_ascii=False)
 
 
 # ------------------------------------------------------------
@@ -450,28 +486,31 @@ def _load_ablation_data(experiment_root: str):
 
 def build_ablation_compare_table(experiment_root: str,
                                  save_path: Optional[str] = None) -> List[Dict[str, Any]]:
-    """A vs B vs C 三组并排, 每个样本一行 (各组 mean±std 与相对 A 的 % 变化)."""
+    """三组并排对比, 每个样本一行 (各组 mean±std 与相对 baseline 的 % 变化)."""
     per_group, samples = _load_ablation_data(experiment_root)
     groups = [g[0] for g in ABLATION_GROUPS]
 
     rows = []
-    metrics = ['final_best', 'iter_to_95pct_repeat', 'wall_time_sec', 'es_score']
+    metrics = ['final_best', 'iter_to_95pct_repeat', 'iter_to_95pct_best', 'aocc',
+               'fixed_budget_1000', 'fixed_budget_5000', 'wall_time_sec', 'es_score',
+               'Landscape.land.best_plan.CONTAG', 'Landscape.land.best_plan.SHEI']
     for idx in sorted(samples):
         row = {'sample': idx}
         for g in groups:
             agg = per_group.get(g, {}).get(idx, {})
+            short = _DIR_TO_SHORT.get(g, g)
             for m in metrics:
                 v = agg.get(m, {})
-                row[f'{g}.{m}.mean'] = v.get('mean', '')
-                row[f'{g}.{m}.std'] = v.get('std', '')
-        a = per_group.get('A_guided', {}).get(idx, {})
-        for g in ['B_unguided', 'C_random']:
+                row[f'{short}.{m}.mean'] = v.get('mean', '')
+                row[f'{short}.{m}.std'] = v.get('std', '')
+        a = per_group.get(_BASELINE_DIR, {}).get(idx, {})
+        for g in _COMPARISON_DIRS:
             other = per_group.get(g, {}).get(idx, {})
             for m in metrics:
                 am = a.get(m, {}).get('mean')
                 om = other.get(m, {}).get('mean')
                 if am and am != 0 and om is not None:
-                    row[f'{g}.{m}.rel_to_A_pct'] = (om - am) / abs(am) * 100
+                    row[f'{_DIR_TO_SHORT[g]}.{m}.rel_to_baseline_pct'] = (om - am) / abs(am) * 100
         rows.append(row)
 
     save_path = save_path or os.path.join(experiment_root, 'plots', 'ablation_compare_table.csv')
@@ -492,18 +531,21 @@ def build_ablation_compare_table(experiment_root: str,
 
 def build_ablation_mean_table(experiment_root: str,
                               save_path: Optional[str] = None) -> List[Dict[str, Any]]:
-    """A/B/C 每组按样本取均值, 对应 ablation.md 表2 (样本-配置均值)."""
+    """每组按样本取均值（三组配置）, 对应 ablation.md 表2 (样本-配置均值)."""
     per_group, samples = _load_ablation_data(experiment_root)
     groups = [g[0] for g in ABLATION_GROUPS]
 
     rows = []
-    metrics = ['final_best', 'iter_to_95pct', 'wall_time_sec', 'es_score']
+    metrics = ['final_best', 'iter_to_95pct', 'wall_time_sec', 'es_score',
+               'Landscape.land.best_plan.CONTAG', 'Landscape.land.best_plan.SHEI']
     metric_map = {'final_best': 'Mean_F_S', 'iter_to_95pct': 'Mean_T95',
-                  'wall_time_sec': 'Mean_Runtime', 'es_score': 'Mean_ESV'}
+                  'wall_time_sec': 'Mean_Runtime', 'es_score': 'Mean_ESV',
+                  'Landscape.land.best_plan.CONTAG': 'Mean_CONTAG',
+                  'Landscape.land.best_plan.SHEI': 'Mean_SHEI'}
     for idx in sorted(samples):
         for g in groups:
             agg = per_group.get(g, {}).get(idx, {})
-            row = {'Sample_ID': idx, 'Config': g.split('_')[0]}
+            row = {'Sample_ID': idx, 'Config': _DIR_TO_SHORT.get(g, g)}
             for m in metrics:
                 v = agg.get(m, {})
                 row[metric_map[m]] = v.get('mean', '')
@@ -512,7 +554,8 @@ def build_ablation_mean_table(experiment_root: str,
     save_path = save_path or os.path.join(experiment_root, 'plots', 'ablation_mean_table.csv')
     ensure_folder(os.path.dirname(save_path))
     if rows:
-        keys = ['Sample_ID', 'Config', 'Mean_T95', 'Mean_Runtime', 'Mean_ESV', 'Mean_F_S']
+        keys = ['Sample_ID', 'Config', 'Mean_T95', 'Mean_Runtime', 'Mean_ESV', 'Mean_F_S',
+                'Mean_CONTAG', 'Mean_SHEI']
         with open(save_path, 'w', encoding='utf-8') as f:
             f.write(','.join(keys) + '\n')
             for r in rows:
@@ -523,42 +566,60 @@ def build_ablation_mean_table(experiment_root: str,
 
 def build_ablation_improvement_table(experiment_root: str,
                                      save_path: Optional[str] = None) -> List[Dict[str, Any]]:
-    """计算每个样本 A vs B / A vs C 的提升率, 对应 ablation.md 表3 (样本提升率)."""
+    """计算每个样本 baseline vs 对照组的提升率, 对应 ablation.md 表3 (样本提升率)."""
     per_group, samples = _load_ablation_data(experiment_root)
 
     rows = []
-    metrics = ['iter_to_95pct', 'wall_time_sec', 'es_score']
-    metric_label = {'iter_to_95pct': 'T95', 'wall_time_sec': 'Runtime', 'es_score': 'ESV'}
+    metrics = ['iter_to_95pct', 'iter_to_95pct_best', 'aocc',
+               'fixed_budget_1000', 'fixed_budget_5000', 'wall_time_sec', 'es_score',
+               'Landscape.land.best_plan.CONTAG', 'Landscape.land.best_plan.SHEI']
+    metric_label = {
+        'iter_to_95pct': 'T95',
+        'iter_to_95pct_best': 'T95_best',
+        'aocc': 'AOCC',
+        'fixed_budget_1000': 'FB1000',
+        'fixed_budget_5000': 'FB5000',
+        'wall_time_sec': 'Runtime',
+        'es_score': 'ESV',
+        'Landscape.land.best_plan.CONTAG': 'CONTAG',
+        'Landscape.land.best_plan.SHEI': 'SHEI',
+    }
+    # 越大越好的指标集合（CONTAG 越大表示景观越聚合；SHEI 越小越好）
+    larger_is_better = {'es_score', 'fixed_budget_1000', 'fixed_budget_5000',
+                        'Landscape.land.best_plan.CONTAG'}
     for idx in sorted(samples):
-        a = per_group.get('A_guided', {}).get(idx, {})
+        a = per_group.get(_BASELINE_DIR, {}).get(idx, {})
         row = {'Sample_ID': idx}
-        for g in ['B_unguided', 'C_random']:
+        for g in _COMPARISON_DIRS:
             other = per_group.get(g, {}).get(idx, {})
-            comp = 'AvsB' if g == 'B_unguided' else 'AvsC'
+            comp_short = f'{_DIR_TO_SHORT[_BASELINE_DIR]}vs{_DIR_TO_SHORT[g]}'
             for m in metrics:
                 am = a.get(m, {}).get('mean')
                 om = other.get(m, {}).get('mean')
                 label = metric_label[m]
                 if am is not None and om is not None and om != 0:
-                    if m == 'es_score':
-                        # ESV Improvement = (A - 对照) / 对照 * 100
-                        row[f'{comp}_{label}_Imp_pct'] = (am - om) / abs(om) * 100
+                    if m in larger_is_better:
+                        # 越大越好: (baseline - 对照) / |对照| * 100
+                        row[f'{comp_short}_{label}_Imp_pct'] = (am - om) / abs(om) * 100
                     else:
-                        # T95/Runtime Reduction = (对照 - A) / 对照 * 100
-                        row[f'{comp}_{label}_Red_pct'] = (om - am) / abs(om) * 100
+                        # 越小越好: (对照 - baseline) / |对照| * 100
+                        row[f'{comp_short}_{label}_Red_pct'] = (om - am) / abs(om) * 100
                 else:
-                    if m == 'es_score':
-                        row[f'{comp}_{label}_Imp_pct'] = ''
-                    else:
-                        row[f'{comp}_{label}_Red_pct'] = ''
+                    suffix = 'Imp_pct' if m in larger_is_better else 'Red_pct'
+                    row[f'{comp_short}_{label}_{suffix}'] = ''
         rows.append(row)
 
     save_path = save_path or os.path.join(experiment_root, 'plots', 'ablation_improvement_table.csv')
     ensure_folder(os.path.dirname(save_path))
     if rows:
-        keys = ['Sample_ID',
-                'AvsB_T95_Red_pct', 'AvsB_Runtime_Red_pct', 'AvsB_ESV_Imp_pct',
-                'AvsC_T95_Red_pct', 'AvsC_Runtime_Red_pct', 'AvsC_ESV_Imp_pct']
+        # 动态构造列名：Sample_ID + 两组对比 × 各指标
+        keys = ['Sample_ID']
+        for g in _COMPARISON_DIRS:
+            comp_short = f'{_DIR_TO_SHORT[_BASELINE_DIR]}vs{_DIR_TO_SHORT[g]}'
+            for m in metrics:
+                label = metric_label[m]
+                suffix = 'Imp_pct' if m in larger_is_better else 'Red_pct'
+                keys.append(f'{comp_short}_{label}_{suffix}')
         with open(save_path, 'w', encoding='utf-8') as f:
             f.write(','.join(keys) + '\n')
             for r in rows:
@@ -582,22 +643,39 @@ def build_ablation_summary_table(experiment_root: str,
         except Exception:
             pass
 
-    metrics = ['iter_to_95pct', 'wall_time_sec', 'es_score']
-    metric_label = {'iter_to_95pct': 'T95 Reduction', 'wall_time_sec': 'Runtime Reduction', 'es_score': 'ESV Improvement'}
+    metrics = ['iter_to_95pct', 'iter_to_95pct_best', 'aocc',
+               'fixed_budget_1000', 'fixed_budget_5000', 'wall_time_sec', 'es_score',
+               'Landscape.land.best_plan.CONTAG', 'Landscape.land.best_plan.SHEI']
+    metric_label = {
+        'iter_to_95pct': 'T95 Reduction',
+        'iter_to_95pct_best': 'T95(best) Reduction',
+        'aocc': 'AOCC Reduction',
+        'fixed_budget_1000': 'Fixed Budget T=1000 Improvement',
+        'fixed_budget_5000': 'Fixed Budget T=5000 Improvement',
+        'wall_time_sec': 'Runtime Reduction',
+        'es_score': 'ESV Improvement',
+        'Landscape.land.best_plan.CONTAG': 'CONTAG Improvement',
+        'Landscape.land.best_plan.SHEI': 'SHEI Reduction',
+    }
+    # 越大越好的指标集合（CONTAG 越大表示景观越聚合；SHEI 越小越好）
+    larger_is_better = {'es_score', 'fixed_budget_1000', 'fixed_budget_5000',
+                        'Landscape.land.best_plan.CONTAG'}
     rows = []
-    for g in ['B_unguided', 'C_random']:
-        comp = 'A vs B' if g == 'B_unguided' else 'A vs C'
+    for g in _COMPARISON_DIRS:
+        comp = f'{_DIR_TO_LABEL[_BASELINE_DIR]} vs {_DIR_TO_LABEL[g]}'
         for m in metrics:
             vals = []
             for idx in sorted(samples):
-                a = per_group.get('A_guided', {}).get(idx, {})
+                a = per_group.get(_BASELINE_DIR, {}).get(idx, {})
                 other = per_group.get(g, {}).get(idx, {})
                 am = a.get(m, {}).get('mean')
                 om = other.get(m, {}).get('mean')
                 if am is not None and om is not None and om != 0:
-                    if m == 'es_score':
+                    if m in larger_is_better:
+                        # 越大越好: (baseline - 对照) / |对照| * 100
                         vals.append((am - om) / abs(om) * 100)
                     else:
+                        # 越小越好: (对照 - baseline) / |对照| * 100
                         vals.append((om - am) / abs(om) * 100)
             if vals:
                 rows.append({
@@ -605,6 +683,7 @@ def build_ablation_summary_table(experiment_root: str,
                     'Comparison': comp,
                     'Metric': metric_label[m],
                     'Mean': round(float(np.mean(vals)), 2),
+                    'Median': round(float(np.median(vals)), 2),
                     'Range_min': round(float(np.min(vals)), 2),
                     'Range_max': round(float(np.max(vals)), 2),
                 })
@@ -612,7 +691,7 @@ def build_ablation_summary_table(experiment_root: str,
     save_path = save_path or os.path.join(experiment_root, 'plots', 'ablation_summary_table.csv')
     ensure_folder(os.path.dirname(save_path))
     if rows:
-        keys = ['Algorithm', 'Comparison', 'Metric', 'Mean', 'Range_min', 'Range_max']
+        keys = ['Algorithm', 'Comparison', 'Metric', 'Mean', 'Median', 'Range_min', 'Range_max']
         with open(save_path, 'w', encoding='utf-8') as f:
             f.write(','.join(keys) + '\n')
             for r in rows:
@@ -678,6 +757,49 @@ class ExperimentResultStore:
             p = os.path.join(rd, 'total_score_list.npy')
             if os.path.exists(p):
                 series.append(np.load(p))
+        if not series:
+            return None
+        min_len = min(len(s) for s in series)
+        aligned = np.stack([s[:min_len] for s in series], axis=0)
+        if smooth_window > 1 and min_len > smooth_window:
+            kernel = np.ones(smooth_window) / smooth_window
+            smoothed = np.stack([
+                np.convolve(s, kernel, mode='valid') for s in aligned
+            ], axis=0)
+            return smoothed
+        return aligned
+
+    def get_improvement_series(
+        self, exp_name: str, index: str, smooth_window: int = 1,
+    ) -> Optional[np.ndarray]:
+        """返回某样本所有 run 的归一化改善百分比序列.
+
+        优先读取已保存的 improvement.npy; 不存在时现场从 total_score_list.npy 计算.
+        Returns shape=(n_runs, min_len), 值域 [0, 100].
+        """
+        run_dirs = self.list_run_dirs(exp_name, index)
+        series = []
+        for rd in run_dirs:
+            imp_p = os.path.join(rd, 'improvement.npy')
+            if os.path.exists(imp_p):
+                series.append(np.load(imp_p))
+                continue
+            p = os.path.join(rd, 'total_score_list.npy')
+            if os.path.exists(p):
+                arr = np.load(p)
+                # 推断最小化/最大化: 读 experiment_summary.json
+                experiment_root = self._experiment_root
+                summary_path = os.path.join(experiment_root, 'experiment_summary.json')
+                runner_type = 'SA'
+                if os.path.exists(summary_path):
+                    try:
+                        with open(summary_path, 'r', encoding='utf-8') as f:
+                            runner_type = json.load(f).get('runner_type', 'SA').upper()
+                    except Exception:
+                        pass
+                imp, _, _ = compute_normalized_improvement(
+                    arr, minimize=(runner_type == 'SA'))
+                series.append(imp)
         if not series:
             return None
         min_len = min(len(s) for s in series)
@@ -987,7 +1109,7 @@ def write_stability_runs_csv(experiment_root: str,
     save_path = save_path or os.path.join(experiment_root, 'plots', 'stability_runs.csv')
     return _write_runs_csv_core(
         experiment_root, rep_json_path,
-        groups=[('A_guided', 'A')],
+        groups=[('A_guided', _DIR_TO_SHORT.get('A_guided', 'A'))],
         save_path=save_path,
         sort_key=lambda x: (x['sample_id'], x['run_idx']),
         label='stability_runs',
@@ -1141,7 +1263,7 @@ def build_stability_per_sample_csv(runs_df,
 
 def build_stability_summary_csv(per_sample_df,
                                 save_path: str,
-                                cv_threshold_pct: float = 5.0):
+                                thresholds_pct=(1.0, 3.0, 5.0, 10.0)):
     """按 algorithm × metric 汇总 per_sample 的 CV 分布, 输出论文 tab:stability-summary.
 
     对 F(S) / ES / Runtime 三类 CV 做跨样本汇总, 生成 6 行:
@@ -1153,13 +1275,14 @@ def build_stability_summary_csv(per_sample_df,
         build_stability_per_sample_csv 的输出, 含 F_cv_pct / ES_cv_pct / RT_cv_pct 列.
     save_path : str
         输出 CSV 路径.
-    cv_threshold_pct : float
-        CV 稳定阈值 (默认 5%).
+    thresholds_pct : tuple of float
+        需要统计的 CV 阈值列表 (默认 1%, 3%, 5%, 10%).
 
     Returns
     -------
     pd.DataFrame
-        列: algorithm, metric, n_samples, mean_cv_pct, max_cv_pct, cv_le_5pct_ratio_pct.
+        列: algorithm, metric, n_samples, mean_cv_pct, median_cv_pct, max_cv_pct,
+        cv_le_1pct_ratio_pct, cv_le_3pct_ratio_pct, cv_le_5pct_ratio_pct, cv_le_10pct_ratio_pct.
     """
     import pandas as pd
 
@@ -1169,7 +1292,6 @@ def build_stability_summary_csv(per_sample_df,
 
     rows = []
     for alg, g in per_sample_df.groupby('algorithm', sort=False):
-        n_samples = len(g)
         for metric_label, cv_col in [('F(S)', 'F_cv_pct'), ('ES', 'ES_cv_pct'), ('Runtime', 'RT_cv_pct')]:
             cv_series = g[cv_col].astype(float)
             # 过滤 NaN (ES 列在部分历史数据中可能全为 NaN)
@@ -1177,15 +1299,18 @@ def build_stability_summary_csv(per_sample_df,
             if cv.size == 0:
                 continue
             n_valid = cv.size
-            n_le_thr = int(np.sum(cv <= cv_threshold_pct))
-            rows.append({
+            row = {
                 'algorithm': alg,
                 'metric': metric_label,
                 'n_samples': n_valid,
                 'mean_cv_pct': float(np.mean(cv)),
+                'median_cv_pct': float(np.median(cv)),
                 'max_cv_pct': float(np.max(cv)),
-                f'cv_le_{int(cv_threshold_pct)}pct_ratio_pct': float(n_le_thr / n_valid * 100) if n_valid else 0.0,
-            })
+            }
+            for thr in thresholds_pct:
+                n_le_thr = int(np.sum(cv <= thr))
+                row[f'cv_le_{int(thr)}pct_ratio_pct'] = float(n_le_thr / n_valid * 100) if n_valid else 0.0
+            rows.append(row)
 
     out = pd.DataFrame(rows)
     ensure_folder(os.path.dirname(save_path))
