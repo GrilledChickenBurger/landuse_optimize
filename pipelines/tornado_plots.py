@@ -466,8 +466,9 @@ def plot_tornado_heatmap(store: ExperimentResultStore,
     save_path = save_path or os.path.join(experiment_root, 'plots', 'tornado_heatmap.png')
     ensure_folder(os.path.dirname(save_path))
 
-    # 收集所有 (parameter, value) × metric 的 Cohen's d
+    # 收集所有 (parameter, value) × metric 的 Cohen's d 和显著性星号
     data: Dict[str, Dict[str, float]] = {}
+    stars_data: Dict[str, Dict[str, str]] = {}
     row_order: List[str] = []
 
     for metric in metrics:
@@ -481,9 +482,11 @@ def plot_tornado_heatmap(store: ExperimentResultStore,
                 row_label = f"{_thesis_name(knob)}={val_str}"
                 if row_label not in data:
                     data[row_label] = {}
+                    stars_data[row_label] = {}
                     row_order.append(row_label)
                 if info['cohens_d'] is not None:
                     data[row_label][metric] = info['cohens_d']
+                stars_data[row_label][metric] = info.get('stars', 'n.s.')
 
     if not data:
         print("  [heatmap] 无可用数据, 跳过")
@@ -505,25 +508,35 @@ def plot_tornado_heatmap(store: ExperimentResultStore,
                 return val_str
         row_order.extend(sorted(labels, key=_num_key))
 
-    # 构建矩阵
+    # 构建矩阵（效应量 + 显著性星号）
     n_rows = len(row_order)
     n_cols = len(metrics)
     matrix = np.full((n_rows, n_cols), np.nan)
+    sig_matrix: List[List[str]] = [['' for _ in range(n_cols)] for _ in range(n_rows)]
 
     for i, row_label in enumerate(row_order):
         for j, metric in enumerate(metrics):
             d_val = data[row_label].get(metric)
             if d_val is not None and np.isfinite(d_val):
                 matrix[i, j] = d_val
+            sig_matrix[i][j] = stars_data.get(row_label, {}).get(metric, '')
 
-    # 输出矩阵 CSV
+    # 输出矩阵 CSV (d 值 + 显著性标记)
     csv_path = save_path.rsplit('.', 1)[0] + '.csv'
     with open(csv_path, 'w', encoding='utf-8', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['parameter_value'] + [_thesis_metric_name(m) for m in metrics])
+        header = ['parameter_value']
+        for m in metrics:
+            header.append(_thesis_metric_name(m))
+            header.append(f'{_thesis_metric_name(m)}_sig')
+        writer.writerow(header)
         for i, row_label in enumerate(row_order):
-            row_vals = [f'{matrix[i, j]:.4f}' if not np.isnan(matrix[i, j]) else '' for j in range(n_cols)]
-            writer.writerow([row_label] + row_vals)
+            row_vals = [row_label]
+            for j in range(n_cols):
+                d_str = f'{matrix[i, j]:.4f}' if not np.isnan(matrix[i, j]) else ''
+                row_vals.append(d_str)
+                row_vals.append(sig_matrix[i][j])
+            writer.writerow(row_vals)
     print(f"Tornado heatmap CSV saved: {csv_path}")
 
     # 颜色映射：红蓝渐变，负值偏蓝，正值偏红
@@ -540,7 +553,7 @@ def plot_tornado_heatmap(store: ExperimentResultStore,
     ax.set_yticks(np.arange(n_rows))
     ax.set_yticklabels(row_order, fontsize=10)
 
-    # 单元格文字：仅显示 d 值
+    # 单元格文字：d 值居中 + 右上角显著性星号
     for i in range(n_rows):
         for j in range(n_cols):
             val = matrix[i, j]
@@ -548,6 +561,11 @@ def plot_tornado_heatmap(store: ExperimentResultStore,
                 continue
             color = 'white' if abs(val) > abs_max * 0.55 else 'black'
             ax.text(j, i, f'{val:.2f}', ha='center', va='center', fontsize=9, color=color)
+            # 右上角星号
+            stars = sig_matrix[i][j]
+            if stars and stars != 'n.s.':
+                ax.text(j + 0.42, i - 0.38, stars, ha='right', va='top',
+                        fontsize=7, color=color, fontweight='bold')
 
     # 色标
     cbar = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
