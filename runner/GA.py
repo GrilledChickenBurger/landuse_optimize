@@ -547,6 +547,8 @@ class GeneticAlgorithm:
             'pred_diff': self.pred_diff,
         }
         for idx in sorted_indices[:49]:
+            if idx >= len(population):
+                continue
             title = f'fitness={fitness_list[idx]:.2f}'
             tensor_dict[title] = population[idx]
             diff = torch.from_numpy(dUtils.remove_lines(population[idx] != self.ori_plan))
@@ -757,8 +759,11 @@ class GeneticAlgorithm:
                                                     gen_ratio=gen/self.max_gen, 
                                                     noimprove_step=noimprove_step)
             
-            # 确保子代数量与种群大小一致（可能多一个或少一个，此处简化处理）
-            offspring = offspring[:self.pop_size]
+            # 确保子代数量与种群大小一致
+            if len(offspring) < self.pop_size:
+                offspring.append(offspring[-1].clone())
+            elif len(offspring) > self.pop_size:
+                offspring = offspring[:self.pop_size]
             
             # --- 精英保留: 0 / 0.1 / 0.5 ---
             if self.elite_ratio > 0:
