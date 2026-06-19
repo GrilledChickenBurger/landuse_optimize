@@ -15,6 +15,8 @@ from sklearn import metrics
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
+from utils.visualize_utils import setup_paper_plot_fonts
+
 # paths
 https = "https://earth-chris.github.io/images/research"
 csv = f"{https}/ariolimax-ca.csv"
@@ -33,6 +35,7 @@ labels = ["CloudCoverMean", "CloudCoverStdv", "LAIMean", "LAIStdv", "SurfaceTemp
 
 # preferences
 mpl.style.use('ggplot')
+FONT = setup_paper_plot_fonts()  # 恢复被 ggplot 覆盖的论文字体
 warnings.filterwarnings("ignore")
 pair_colors = ['#FFCC02', '#00458C']
 
@@ -197,10 +200,11 @@ def compare_bg_vs_tgt_data(presence: gpd.GeoDataFrame, background: gpd.GeoDataFr
             label=['presence', 'background'],
             color=pair_colors,
         )
-        ax.set_title(label)
-        
+        ax.set_title(label, fontproperties=FONT['title'])
+        ax.tick_params(labelsize=FONT['tick'].get_size())
+
     handles, lbls = ax.get_legend_handles_labels()
-    fig.legend(handles, lbls, loc=(0.6, 0.9))
+    fig.legend(handles, lbls, loc=(0.6, 0.9), prop=FONT['legend'])
     plt.tight_layout()
 
 
@@ -326,10 +330,12 @@ def predict_and_save_raster(model_path, rasters, result_folder, result_name='max
         # plot the suitability predictions
         fig, ax = plt.subplots(1, 1, figsize=(7, 6), dpi=100)
         plot = ax.imshow(pred, vmin=0, vmax=1, cmap='GnBu')
-        ax.set_title('$FJMS$ suitability')
+        ax.set_title('$FJMS$ suitability', fontproperties=FONT['title'])
         ax.set_xticks([])
         ax.set_yticks([])
-        cbar = plt.colorbar(plot, ax=ax, label="relative occurrence probability", pad=0.04)
+        cbar = plt.colorbar(plot, ax=ax, pad=0.04)
+        cbar.set_label("relative occurrence probability", fontproperties=FONT['label'])
+        cbar.ax.tick_params(labelsize=FONT['tick'].get_size())
         plt.tight_layout()
         plt.show()
     

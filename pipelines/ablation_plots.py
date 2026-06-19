@@ -7,9 +7,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 
-# ── 全局字体: 英文 Times New Roman Bold + 中文回退 ──────────────
-from utils.visualize_utils import setup_plot_fonts
-setup_plot_fonts()
+# ── 统一论文字体: 英文 Times New Roman + 中文 SimSun ──────────────
+from utils.visualize_utils import setup_ablation_fonts
+
+FONT = setup_ablation_fonts()
+TITLE_PROP = FONT['title']
+LABEL_PROP = FONT['label']
+TICK_PROP = FONT['tick']
+LEGEND_PROP = FONT['legend']
+ANNOT_PROP = FONT['annot']
 # ──────────────────────────────────────────────────────────────────
 
 
@@ -54,11 +60,11 @@ def _draw_level_labels(ax, primary, n):
             mid_x = np.mean(indices)
             text_color = _LEVEL_TEXT_COLORS.get(lv, '#555555')
             ax.text(mid_x, y_text, lv, ha='center', va='center',
-                    fontsize=11, color=text_color, fontweight='bold',
+                    color=text_color, fontproperties=ANNOT_PROP,
                     alpha=0.7, zorder=5)
 
 
-def _set_bottom_center_legend(artist, ncol=None, handles=None, labels=None):
+def _set_bottom_center_legend(artist, ncol=None, handles=None, labels=None, prop=None):
     """统一图例风格：放在下方居中，x_label 之下，透明无边框。
 
     Parameters
@@ -69,7 +75,11 @@ def _set_bottom_center_legend(artist, ncol=None, handles=None, labels=None):
         图例列数；默认根据条目数自动选择（最多 4 列）。
     handles, labels : list, optional
         用于 Figure.legend 的句柄与标签；对 Axes 可缺省，自动从 artist 获取。
+    prop : FontProperties, optional
+        图例字体属性；默认使用 FONT['legend']。
     """
+    if prop is None:
+        prop = LEGEND_PROP
     if isinstance(artist, plt.Axes):
         handles, labels = handles or artist.get_legend_handles_labels()
         if not labels:
@@ -78,7 +88,7 @@ def _set_bottom_center_legend(artist, ncol=None, handles=None, labels=None):
             ncol = min(len(labels), 4)
         artist.legend(handles, labels, loc='upper center',
                       bbox_to_anchor=(0.5, -0.14), ncol=ncol,
-                      frameon=False)
+                      frameon=False, prop=prop)
     else:  # Figure
         if not labels:
             return
@@ -87,7 +97,7 @@ def _set_bottom_center_legend(artist, ncol=None, handles=None, labels=None):
         # 使用 figure 坐标，把图例放在底部留白区域内
         artist.legend(handles, labels, loc='lower center',
                       bbox_to_anchor=(0.5, 0.04), ncol=ncol,
-                      frameon=False)
+                      frameon=False, prop=prop)
 
 
 from utils.tools import ensure_folder
@@ -125,11 +135,11 @@ def plot_stability_convergence(store: ExperimentResultStore,
         ax.plot(x, s, color='steelblue', alpha=0.3, linewidth=0.8)
     ax.plot(x, mean, color='navy', linewidth=2.0, label=f'mean (n={series.shape[0]})')
     ax.fill_between(x, mean - std, mean + std, color='steelblue', alpha=0.2, label='±1 std')
-    ax.set_xlabel('iteration (smoothed)')
-    ax.set_ylabel('total_score (lower=better)')
-    ax.set_title(f'Stability: {index} (n={series.shape[0]} runs)')
+    ax.set_xlabel('迭代次数（平滑）', fontproperties=LABEL_PROP)
+    ax.set_ylabel('目标函数值（越低越好）', fontproperties=LABEL_PROP)
+    ax.set_title(f'稳定性: {index}（n={series.shape[0]} 次运行）', fontproperties=TITLE_PROP)
     _set_bottom_center_legend(ax)
-    ax.grid(linestyle='--', alpha=0.4)
+    ax.grid(linestyle='--', alpha=0.4, axis='y')
     fig.tight_layout()
     fig.subplots_adjust(bottom=0.20)
     ensure_folder(os.path.dirname(save_path))
@@ -169,14 +179,14 @@ def plot_stability_convergence_all_samples(store: ExperimentResultStore,
         ax.plot(x, mean, color=color, linewidth=1.5, label=f'{idx} (n={n})')
         ax.fill_between(x, mean - std, mean + std, color=color, alpha=0.12)
 
-    ax.set_xlabel('iteration (smoothed)')
-    ax.set_ylabel('total_score (lower=better)')
+    ax.set_xlabel('迭代次数（平滑）', fontproperties=LABEL_PROP)
+    ax.set_ylabel('目标函数值（越低越好）', fontproperties=LABEL_PROP)
     group_name = exp_name
     n_runs_str = ','.join(str(n) for n in n_runs_list)
-    ax.set_title(f'Stability across samples: {group_name} '
-                 f'({runner_type.upper()}, {len(per_sample)} samples × {n_runs_str} runs)')
+    ax.set_title(f'跨样本稳定性: {group_name} '
+                 f'({runner_type.upper()}, {len(per_sample)} 样本 × {n_runs_str} 次运行)', fontproperties=TITLE_PROP)
     _set_bottom_center_legend(ax, ncol=min(len(per_sample), 3))
-    ax.grid(linestyle='--', alpha=0.4)
+    ax.grid(linestyle='--', alpha=0.4, axis='y')
     fig.tight_layout()
     fig.subplots_adjust(bottom=0.20)
     ensure_folder(os.path.dirname(save_path))
@@ -204,11 +214,11 @@ def plot_ablation_convergence(store: ExperimentResultStore,
         if iter_repeat is not None and iter_repeat > 0:
             ax.axvline(iter_repeat, color=color, linestyle=ls, alpha=0.4, linewidth=1.0)
 
-    ax.set_xlabel('iteration (smoothed)')
-    ax.set_ylabel('total_score (lower=better)')
-    ax.set_title(f'Ablation convergence A/B/C: {idx}')
+    ax.set_xlabel('迭代次数（平滑）', fontproperties=LABEL_PROP)
+    ax.set_ylabel('目标函数值（越低越好）', fontproperties=LABEL_PROP)
+    ax.set_title(f'消融收敛 A/B/C: {idx}', fontproperties=TITLE_PROP)
     _set_bottom_center_legend(ax)
-    ax.grid(linestyle='--', alpha=0.4)
+    ax.grid(linestyle='--', alpha=0.4, axis='y')
     fig.tight_layout()
     fig.subplots_adjust(bottom=0.20)
     ensure_folder(os.path.dirname(save_path))
@@ -249,15 +259,15 @@ def plot_ablation_convergence_normalized(store: ExperimentResultStore,
         if iter_best is not None and 0 < iter_best < len(x):
             ax.axvline(iter_best, color=color, linestyle=ls, alpha=0.5, linewidth=1.2)
             ax.text(iter_best, 100.5, f'{int(iter_best)}',
-                    color=color, fontsize=8, ha='center', va='bottom')
+                    color=color, ha='center', va='bottom', fontproperties=ANNOT_PROP)
 
-    ax.axhline(95.0, color='gray', linestyle='--', linewidth=1.0, alpha=0.7, label='95%')
-    ax.set_xlabel('iteration')
-    ax.set_ylabel('normalized improvement (%)')
-    ax.set_title(f'Ablation convergence (normalized): {idx}')
+    ax.axhline(95.0, color='#DC143C', linestyle='--', linewidth=1.2, alpha=0.8, label='95%')
+    ax.set_xlabel('迭代次数', fontproperties=LABEL_PROP)
+    ax.set_ylabel('归一化改善率 (%)', fontproperties=LABEL_PROP)
+    ax.set_title(f'消融收敛（归一化）: {idx}', fontproperties=TITLE_PROP)
     ax.set_ylim(-5, 110)
     _set_bottom_center_legend(ax)
-    ax.grid(linestyle='--', alpha=0.4)
+    ax.grid(linestyle='--', alpha=0.4, axis='y')
     fig.tight_layout()
     fig.subplots_adjust(bottom=0.20)
     ensure_folder(os.path.dirname(save_path))
@@ -313,13 +323,13 @@ def plot_ablation_convergence_normalized_all_samples(store: ExperimentResultStor
         ax.fill_between(x, grand_mean - grand_std, grand_mean + grand_std,
                         color=color, alpha=0.15)
 
-    ax.axhline(95.0, color='gray', linestyle='--', linewidth=1.0, alpha=0.7, label='95%')
-    ax.set_xlabel('迭代次数')
-    ax.set_ylabel('归一化改善率 (%)')
-    ax.set_title('A/B/C 三组归一化收敛曲线（跨样本聚合）')
+    ax.axhline(95.0, color='#DC143C', linestyle='--', linewidth=1.2, alpha=0.8, label='95%')
+    ax.set_xlabel('迭代次数', fontproperties=LABEL_PROP)
+    ax.set_ylabel('归一化改善率 (%)', fontproperties=LABEL_PROP)
+    ax.set_title('A/B/C 三组归一化收敛曲线（跨样本聚合）', fontproperties=TITLE_PROP)
     ax.set_ylim(-5, 110)
     _set_bottom_center_legend(ax)
-    ax.grid(linestyle='--', alpha=0.25, color='#cccccc')
+    ax.grid(linestyle='--', alpha=0.5, color='gray', axis='y')
     fig.tight_layout()
     fig.subplots_adjust(bottom=0.20)
     ensure_folder(os.path.dirname(save_path))
@@ -361,16 +371,16 @@ def plot_stability_cv_line(per_sample_csv_or_df,
     # 根据指标选列和标签
     if metric == 'F(S)':
         cv_col = 'F_cv_pct'
-        ylabel = r'综合目标函数变异系数 CV (%)'
-        title = r'SA 与 GA 稳定性对比：综合目标函数'
+        ylabel = '综合目标函数变异系数 CV (%)'
+        title = 'SA 与 GA 稳定性对比：综合目标函数'
     elif metric == 'ES':
         cv_col = 'ES_cv_pct'
-        ylabel = r'生态系统服务变异系数 CV (%)'
-        title = r'SA 与 GA 稳定性对比：生态系统服务'
+        ylabel = '生态系统服务变异系数 CV (%)'
+        title = 'SA 与 GA 稳定性对比：生态系统服务'
     else:
         cv_col = 'RT_cv_pct'
-        ylabel = r'运行时间变异系数 CV (%)'
-        title = r'SA 与 GA 稳定性对比：运行时间'
+        ylabel = '运行时间变异系数 CV (%)'
+        title = 'SA 与 GA 稳定性对比：运行时间'
 
     if df.empty or 'algorithm' not in df.columns or cv_col not in df.columns:
         print(f"  [cv_scatter] 缺 algorithm 或 {cv_col} 列, 跳过")
@@ -418,21 +428,21 @@ def plot_stability_cv_line(per_sample_csv_or_df,
 
     # ── X 轴: S1..SN 短标签 ──────────────────────────────────────
     ax.set_xticks(x_positions)
-    ax.set_xticklabels([f'S{i + 1}' for i in range(n)], rotation=0, ha='center')
+    ax.set_xticklabels([f'S{i + 1}' for i in range(n)], rotation=0, ha='center', fontproperties=TICK_PROP)
 
     # ── SA/GA 图例: 下方居中, 位于 x_label 之下 ─────────────────
     _set_bottom_center_legend(ax)
 
-    ax.set_xlabel(x_label)
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
+    ax.set_xlabel(x_label, fontproperties=LABEL_PROP)
+    ax.set_ylabel(ylabel, fontproperties=LABEL_PROP)
+    ax.set_title(title, fontproperties=TITLE_PROP)
     ax.set_xlim(-0.7, n - 0.3)
     ax.grid(axis='y', linestyle='--', alpha=0.4)
 
     # CV=5% 阈值水平线
     ax.axhline(y=5.0, color='gray', linestyle=':', alpha=0.6, linewidth=1.0)
     ax.annotate('5%', xy=(0.98, 5.0), ha='right', va='bottom',
-                color='gray', xycoords=('axes fraction', 'data'))
+                color='gray', xycoords=('axes fraction', 'data'), fontproperties=ANNOT_PROP)
 
     fig.subplots_adjust(bottom=0.20)
     ensure_folder(os.path.dirname(save_path))
@@ -532,7 +542,7 @@ def plot_stability_cv_line_combined(per_sample_csv_or_df,
     # ── X 轴 ─────────────────────────────────────────────────────
     ax_f.set_xticks(x_positions)
     ax_f.set_xticklabels([f'S{i + 1}' for i in range(n)],
-                         rotation=0, ha='center')
+                         rotation=0, ha='center', fontproperties=TICK_PROP)
 
     # ── 图例: 下方居中, 位于 x_label 之下 ───────────────────────
     lines_f, labels_f = ax_f.get_legend_handles_labels()
@@ -541,10 +551,10 @@ def plot_stability_cv_line_combined(per_sample_csv_or_df,
 
     # ── 标签与标题 ───────────────────────────────────────────────
     if dual_panel:
-        ax_f.set_ylabel('综合目标函数 CV (%)')
-        ax_e.set_ylabel('生态系统服务 CV (%)')
-        ax_e.set_xlabel('样本（按 n_pred 升序）')
-        ax_f.set_title('SA 与 GA 稳定性对比：综合目标函数与生态系统服务')
+        ax_f.set_ylabel('综合目标函数 CV (%)', fontproperties=LABEL_PROP)
+        ax_e.set_ylabel('生态系统服务 CV (%)', fontproperties=LABEL_PROP)
+        ax_e.set_xlabel('样本（按 n_pred 升序）', fontproperties=LABEL_PROP)
+        ax_f.set_title('SA 与 GA 稳定性对比：综合目标函数与生态系统服务', fontproperties=TITLE_PROP)
         ax_f.set_xlim(-0.7, n - 0.3)
         ax_e.set_xlim(-0.7, n - 0.3)
         ax_f.grid(axis='y', linestyle='--', alpha=0.4)
@@ -552,19 +562,19 @@ def plot_stability_cv_line_combined(per_sample_csv_or_df,
         # 5% 阈值线仅上图
         ax_f.axhline(y=5.0, color='gray', linestyle=':', alpha=0.6, linewidth=1.0)
         ax_f.annotate('5%', xy=(0.98, 5.0), ha='right', va='bottom',
-                      color='gray', xycoords=('axes fraction', 'data'))
+                      color='gray', xycoords=('axes fraction', 'data'), fontproperties=ANNOT_PROP)
         fig.subplots_adjust(bottom=0.20)
     else:
-        ax1.set_xlabel('样本（按 n_pred 升序）')
-        ax1.set_ylabel('综合目标函数 CV (%)', color='tab:blue')
-        ax2.set_ylabel('生态系统服务 CV (%)', color='tab:orange')
-        ax1.set_title('SA 与 GA 稳定性对比：综合目标函数与生态系统服务')
+        ax1.set_xlabel('样本（按 n_pred 升序）', fontproperties=LABEL_PROP)
+        ax1.set_ylabel('综合目标函数 CV (%)', color='tab:blue', fontproperties=LABEL_PROP)
+        ax2.set_ylabel('生态系统服务 CV (%)', color='tab:orange', fontproperties=LABEL_PROP)
+        ax1.set_title('SA 与 GA 稳定性对比：综合目标函数与生态系统服务', fontproperties=TITLE_PROP)
         ax1.set_xlim(-0.7, n - 0.3)
         ax1.grid(axis='y', linestyle='--', alpha=0.4)
         # 5% 阈值线
         ax1.axhline(y=5.0, color='gray', linestyle=':', alpha=0.6, linewidth=1.0)
         ax1.annotate('5%', xy=(0.98, 5.0), ha='right', va='bottom',
-                      color='gray', xycoords=('axes fraction', 'data'))
+                      color='gray', xycoords=('axes fraction', 'data'), fontproperties=ANNOT_PROP)
         fig.tight_layout()
         fig.subplots_adjust(bottom=0.20)
 
@@ -647,18 +657,27 @@ def plot_stability_boxplot(per_sample_csv_or_df,
 
     fig, ax = plt.subplots(figsize=figsize)
 
+    COLOR_SA = '#1976D2'  # 蓝 - SA 方法
+    COLOR_GA = '#FB8C00'  # 橙 - GA 方法
+
     bp_sa = ax.boxplot(
         sa_data, positions=sa_positions, widths=0.28,
         patch_artist=True,
-        boxprops=dict(facecolor='tab:blue', alpha=0.45),
-        medianprops=dict(color='navy', linewidth=1.5),
+        showmeans=False,
+        boxprops=dict(facecolor=COLOR_SA, alpha=0.3, edgecolor=COLOR_SA, linewidth=1.2),
+        whiskerprops=dict(color=COLOR_SA, linewidth=1.2),
+        capprops=dict(color=COLOR_SA, linewidth=1.2),
+        medianprops=dict(color='white', linewidth=1.8),
         flierprops=dict(marker='', markersize=0),  # 隐藏离群点, 由散点替代
     )
     bp_ga = ax.boxplot(
         ga_data, positions=ga_positions, widths=0.28,
         patch_artist=True,
-        boxprops=dict(facecolor='tab:orange', alpha=0.45),
-        medianprops=dict(color='darkorange', linewidth=1.5),
+        showmeans=False,
+        boxprops=dict(facecolor=COLOR_GA, alpha=0.3, edgecolor=COLOR_GA, linewidth=1.2),
+        whiskerprops=dict(color=COLOR_GA, linewidth=1.2),
+        capprops=dict(color=COLOR_GA, linewidth=1.2),
+        medianprops=dict(color='white', linewidth=1.8),
         flierprops=dict(marker='', markersize=0),
     )
 
@@ -669,25 +688,25 @@ def plot_stability_boxplot(per_sample_csv_or_df,
             continue
         jitter = rng.uniform(-0.06, 0.06, len(vals))
         ax.scatter(np.full_like(vals, pos, dtype=float) + jitter, vals,
-                   color='tab:blue', alpha=0.7, s=30, zorder=3, edgecolors='white', linewidth=0.3)
+                   color=COLOR_SA, alpha=0.7, s=30, zorder=3, edgecolors='white', linewidth=0.3)
     for pos, vals in zip(ga_positions, ga_data):
         if len(vals) == 0:
             continue
         jitter = rng.uniform(-0.06, 0.06, len(vals))
         ax.scatter(np.full_like(vals, pos, dtype=float) + jitter, vals,
-                   color='tab:orange', alpha=0.7, s=30, zorder=3, edgecolors='white', linewidth=0.3)
+                   color=COLOR_GA, alpha=0.7, s=30, zorder=3, edgecolors='white', linewidth=0.3)
 
     # 5% 参考线
     ax.axhline(y=5.0, color='gray', linestyle=':', alpha=0.6, linewidth=1.0)
     ax.annotate('5%', xy=(0.98, 5.0), ha='right', va='bottom',
-                color='gray', xycoords=('axes fraction', 'data'))
+                color='gray', xycoords=('axes fraction', 'data'), fontproperties=ANNOT_PROP)
 
     # x 轴: 中文标签, 水平不旋转
     x_labels = [m[3] for m in metrics_info]
     ax.set_xticks(x_positions)
-    ax.set_xticklabels(x_labels, rotation=0)
-    ax.set_ylabel('变异系数 CV (%)')
-    ax.set_title(f'SA 与 GA 稳定性：跨样本变异系数分布（{n_samples} 个样本）')
+    ax.set_xticklabels(x_labels, rotation=0, fontproperties=TICK_PROP)
+    ax.set_ylabel('变异系数 CV (%)', fontproperties=LABEL_PROP)
+    ax.set_title(f'SA 与 GA 稳定性：跨样本变异系数分布（{n_samples} 个样本）', fontproperties=TITLE_PROP)
 
     # 图例 (透明背景, 下方居中)
     _set_bottom_center_legend(ax)

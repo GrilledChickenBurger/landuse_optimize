@@ -161,14 +161,16 @@ def comparison_pipeline(sa_expr_path: str,
             ga_folder=ga_folder,
             save_dir=save_folder,
             data_type="LU",
-            comparison_type=comparison_type)
+            comparison_type=comparison_type,
+            layout_mode="by_type")
     if "es_box" in plot_types:
         plot_sa_ga_boxplots(
             sa_folder=sa_folder,
             ga_folder=ga_folder,
             save_dir=save_folder,
             data_type="ES",
-            comparison_type=comparison_type)
+            comparison_type=comparison_type,
+            layout_mode='by_scenario')
     if "combined_area_json" in plot_types:
         export_sa_ga_combined_area_data(
             sa_folder=sa_folder,

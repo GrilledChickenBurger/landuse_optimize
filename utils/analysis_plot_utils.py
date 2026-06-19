@@ -3,7 +3,6 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib import font_manager
 from matplotlib.patches import Patch
 
 from libs.const import (
@@ -35,18 +34,13 @@ from utils.analysis_utils import (
     visualize_by_type_bars,
 )
 from utils.tools import ensure_folder
-from utils.visualize_utils import grouped_bar_figure, grouped_box_plot_figure, setup_plot_fonts
+from utils.visualize_utils import (
+    grouped_bar_figure,
+    grouped_box_plot_figure,
+    setup_paper_plot_fonts,
+)
 
-
-def setup_result_plot_style(font_family: str = "Times New Roman"):
-    setup_plot_fonts()
-
-
-def _zh_font(size=None):
-    prop = font_manager.FontProperties(fname='C:/Windows/Fonts/msyh.ttc')
-    if size is not None:
-        prop.set_size(size)
-    return prop
+FONT = setup_paper_plot_fonts()
 
 
 def plot_single_experiment_lu_bars(data_folder: str, save_folder: str, json_path: str = None):
@@ -194,7 +188,6 @@ def compare_sample_images(img_folder1: str, img_folder2: str,
 def plot_sa_ga_diff_bars(sa_folder: str, ga_folder: str, save_dir: str = "figures/comparison",
                          y_scale: str = "pct", signed_mode: bool = True,
                          gap_threshold: float = 50, save_dpi: int = 200):
-    setup_result_plot_style()
     sa_raw, ga_raw = build_sa_ga_total_area_data(sa_folder, ga_folder)
     scenario_order = _sa_ga_scenario_order()
     display_names = _sa_ga_display_names()
@@ -215,11 +208,10 @@ def plot_sa_ga_diff_bars(sa_folder: str, ga_folder: str, save_dir: str = "figure
     ncols, nrows = 2, (len(lu_names) + 1) // 2
     fig, axes = plt.subplots(nrows, ncols, figsize=(22, 12))
     axes = axes.flatten() if len(lu_names) > 1 else [axes]
-    y_label = "Change (percentage points)" if y_scale == "pct" else "Change (ratio vs target)"
+    y_label = "变化量（百分点）" if y_scale == "pct" else "变化量（比率 vs 目标）"
     bar_label_fmt = "{:.1f}" if y_scale == "pct" else "{:.2f}"
     ytick_fmt = "{:.1f}" if y_scale == "pct" else "{:.2f}"
     series_colors = _sa_ga_diff_colors()
-    zh_font = _zh_font()
 
     for i, lu_name in enumerate(lu_names):
         grouped_bar_figure(
@@ -233,19 +225,13 @@ def plot_sa_ga_diff_bars(sa_folder: str, ga_folder: str, save_dir: str = "figure
             show_legend=False,
             show_bar_labels=True,
             bar_label_fmt=bar_label_fmt,
-            title_fontsize=20,
-            ylabel_fontsize=18,
-            tick_fontsize=15,
-            bar_label_fontsize=18,
             ytick_fmt=ytick_fmt,
-            show_xticklabels=False,
-            zh_font=zh_font)
+            show_xticklabels=False)
 
     for j in range(len(lu_names), len(axes)):
         axes[j].set_visible(False)
 
     _add_sa_ga_diff_legend(fig, series_colors)
-    plt.subplots_adjust(bottom=0.18)
     fig.savefig(save_path, dpi=save_dpi, bbox_inches='tight')
     plt.close(fig)
     print(f"SA vs GA diff bars saved to: {save_path}")
@@ -258,7 +244,6 @@ def plot_sa_ga_boxplots(sa_folder: str, ga_folder: str,
                         layout_mode: str = "by_scenario",
                         save_dpi_combined: int = 200,
                         save_dpi_single: int = 150):
-    setup_result_plot_style()
     config = _resolve_sa_ga_boxplot_config(data_type, comparison_type)
     data = _build_sa_ga_boxplot_data(sa_folder, ga_folder, config, layout_mode)
     save_folder = os.path.join(save_dir, config["save_subdir"])
@@ -272,46 +257,32 @@ def plot_sa_ga_boxplots(sa_folder: str, ga_folder: str,
         subplot_layout=(2, 2),
         figsize=(20, 13),
         showfliers=False,
-        showmeans=True,
-        unified_ylim=True,
+        showmeans=False,
+        unified_ylim=False,
         exclude_fliers_for_ylim=True,
         ylim_margin=0.05,
         hspace=0.2,
-        wspace=0.15,
+        wspace=0.25,
         save_path=os.path.join(save_folder, f"SA_vs_GA_{comparison_type}.png"),
         dpi=save_dpi_combined,
-        title_fontsize=22,
-        ylabel_fontsize=20,
-        tick_fontsize=22,
-        legend_fontsize=22,
-        suptitle_fontsize=21,
-        legend_loc="bottom",
-        legend_use_zh_font=False,
-        zh_font=_zh_font())
+        legend_loc="bottom")
     print(f"Combined figure saved to: {save_folder}")
 
     for subplot_key in data.keys():
         grouped_box_plot_figure(
             data={subplot_key: data[subplot_key]},
-            title=f"{subplot_key} - SA vs GA {config['y_label']} (vs {comparison_type})",
+            title=f"{subplot_key} - SA vs GA {config['y_label']}（对比 {comparison_type}）",
             y_label=config["y_label"],
             series_colors=SA_GA_COLOR_MAP,
             figsize=(8, 5),
             showfliers=False,
-            showmeans=True,
-            unified_ylim=True,
+            showmeans=False,
+            unified_ylim=False,
             exclude_fliers_for_ylim=True,
             ylim_margin=0.05,
             save_path=os.path.join(save_folder, f"{subplot_key}_{comparison_type}.png"),
             dpi=save_dpi_single,
-            title_fontsize=22,
-            ylabel_fontsize=20,
-            tick_fontsize=22,
-            legend_fontsize=22,
-            suptitle_fontsize=21,
-            legend_loc="bottom",
-            legend_use_zh_font=False,
-            zh_font=_zh_font())
+            legend_loc="bottom")
     print(f"Individual figures saved to: {save_folder}")
 
 
@@ -319,7 +290,6 @@ def plot_model_comparison_bar(json_path: str = "model_comparison_data.json",
                               save_dir: str = "figures",
                               save_name: str = "model_comparison_bar.png",
                               save_dpi: int = 200):
-    setup_result_plot_style()
     with open(json_path, "r", encoding="utf-8") as f:
         cmp_data = json.load(f)
 
@@ -344,19 +314,19 @@ def plot_model_comparison_bar(json_path: str = "model_comparison_data.json",
                    color=green_shades[k], alpha=0.85,
                    edgecolor='white', linewidth=0.5)
             ax.text(x_pos, val + 0.005, f"{val:.4f}",
-                    ha='center', va='bottom', fontsize=13, fontweight='bold')
+                    ha='center', va='bottom', fontproperties=FONT['annot'])
 
     ax.set_xticks(range(len(metric_names)))
-    ax.set_xticklabels(metric_names, fontsize=16, fontweight='bold')
+    ax.set_xticklabels(metric_names, fontproperties=FONT['tick'])
     ax.set_ylim(0, 1.06)
-    ax.set_ylabel("Score", fontsize=16, fontweight='bold')
-    ax.grid(True, alpha=0.3, axis='y')
+    ax.set_ylabel("得分", fontproperties=FONT['label'])
+    ax.grid(True, alpha=0.5, axis='y', color='gray', linestyle='--')
     ax.set_axisbelow(True)
     ax.legend(
         handles=[Patch(facecolor=green_shades[k], alpha=0.85, edgecolor='white', label=models[k])
                  for k in range(len(models))],
         loc='upper center', bbox_to_anchor=(0.5, -0.08), ncol=4,
-        fontsize=13, frameon=False)
+        prop=FONT['legend'], frameon=False)
 
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, save_name)
@@ -391,7 +361,7 @@ def _sa_ga_display_names():
     names = {}
     for method in ["SA", "GA"]:
         for scenario in ALL_SCENARIOS:
-            names[f"{method}_{scenario}"] = f"{method}_{ALL_SCENARIOS_DICT.get(scenario, scenario)}"
+            names[f"{method}_{scenario}"] = f"{method} {ALL_SCENARIOS_DICT.get(scenario, scenario)}"
     return names
 
 
@@ -400,8 +370,8 @@ def _sa_ga_diff_colors():
     oranges = plt.cm.Oranges(np.linspace(0.85, 0.35, len(ALL_SCENARIOS)))
     colors = {}
     for i, scenario in enumerate(ALL_SCENARIOS):
-        colors[f"SA_{ALL_SCENARIOS_DICT.get(scenario, scenario)}"] = blues[i]
-        colors[f"GA_{ALL_SCENARIOS_DICT.get(scenario, scenario)}"] = oranges[i]
+        colors[f"SA {ALL_SCENARIOS_DICT.get(scenario, scenario)}"] = blues[i]
+        colors[f"GA {ALL_SCENARIOS_DICT.get(scenario, scenario)}"] = oranges[i]
     colors["真实"] = "#dedede"
     return colors
 
@@ -415,21 +385,20 @@ def _diff_reference_lines(ref_val, direction, signed_mode):
 
 
 def _add_sa_ga_diff_legend(fig, series_colors):
-    sa_names = [f"SA_{ALL_SCENARIOS_DICT.get(s, s)}" for s in ALL_SCENARIOS]
-    ga_names = [f"GA_{ALL_SCENARIOS_DICT.get(s, s)}" for s in ALL_SCENARIOS]
+    sa_names = [f"SA {ALL_SCENARIOS_DICT.get(s, s)}" for s in ALL_SCENARIOS]
+    ga_names = [f"GA {ALL_SCENARIOS_DICT.get(s, s)}" for s in ALL_SCENARIOS]
     sa_handles = [plt.Rectangle((0, 0), 1, 1, fc=series_colors.get(name, "gray"), alpha=0.85)
                   for name in sa_names]
     ga_handles = [plt.Rectangle((0, 0), 1, 1, fc=series_colors.get(name, "gray"), alpha=0.85)
                   for name in ga_names]
     ga_handles.append(plt.Rectangle((0, 0), 1, 1, fc=series_colors["真实"], alpha=0.85))
-    zh_font_legend = _zh_font(20)
     leg_sa = fig.legend(sa_handles, sa_names, ncol=4, loc='lower center',
-                        bbox_to_anchor=(0.5, 0.08), frameon=False,
-                        handlelength=1.2, handleheight=1.2, prop=zh_font_legend)
+                        bbox_to_anchor=(0.5, 0.04), frameon=False,
+                        handlelength=1.2, handleheight=1.2, prop=FONT['legend'])
     fig.add_artist(leg_sa)
     fig.legend(ga_handles, ga_names + ["真实"], ncol=5, loc='lower center',
-               bbox_to_anchor=(0.5, 0.02), frameon=False,
-               handlelength=1.2, handleheight=1.2, prop=zh_font_legend)
+               bbox_to_anchor=(0.5, -0.02), frameon=False,
+               handlelength=1.2, handleheight=1.2, prop=FONT['legend'])
 
 
 def _resolve_sa_ga_boxplot_config(data_type: str, comparison_type: str):
@@ -441,7 +410,7 @@ def _resolve_sa_ga_boxplot_config(data_type: str, comparison_type: str):
             "calc_fn": cal_sample_area_change_ratio,
             "calc_kwargs": {"aggregate_by_first_digit": True, "comparison_type": comparison_type},
             "cache_name": f"sample_area_{comparison_type}.json",
-            "y_label": "LU area change ratio",
+            "y_label": "土地利用面积变化比率",
             "save_subdir": "SA_GA_lu_boxplot",
         }
     if normalized == "ES":
@@ -451,7 +420,7 @@ def _resolve_sa_ga_boxplot_config(data_type: str, comparison_type: str):
             "calc_fn": cal_sample_es_change_ratio,
             "calc_kwargs": {"comparison_type": comparison_type},
             "cache_name": f"sample_es_{comparison_type}.json",
-            "y_label": "ES value change ratio",
+            "y_label": "生态系统服务量变化比率",
             "save_subdir": "SA_GA_es_boxplot",
         }
     raise ValueError(f"Unsupported data_type: {data_type}")

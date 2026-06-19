@@ -218,6 +218,9 @@ def get_initial_score_list() -> List[float]:
     
 
 def draw_score_list(score_list_data: List[Union[List[float], Dict[str, List[float]]]], title_list: List[str] = None, save_folder: str = None) -> None:
+    # 确保字体已设置（tools.draw_single_line/draw_multi_line 依赖此调用）
+    from utils.visualize_utils import setup_large_plot_fonts
+    setup_large_plot_fonts()
     """
     绘制目标函数项的变化曲线\n
     Parameters:
@@ -273,8 +276,8 @@ def draw_score_list(score_list_data: List[Union[List[float], Dict[str, List[floa
                         title='Ecosystem Services (absolute)',
                         save_path=ev_path)
 
-def draw_score_list_general(score_list_data: List[List[float]], 
-                            title_list: List[str] = None, 
+def draw_score_list_general(score_list_data: List[List[float]],
+                            title_list: List[str] = None,
                             save_folder: str = None,
                             multi: bool = False) -> None:
     """
@@ -286,6 +289,8 @@ def draw_score_list_general(score_list_data: List[List[float]],
         save_folder: str, 图表保存文件夹
         multi: bool, 是否将多条曲线绘制在一张图上
     """
+    from utils.visualize_utils import setup_large_plot_fonts
+    setup_large_plot_fonts()
     ensure_folder(save_folder)
     if title_list is None:
         title_list = [f'Score_{i}' for i in range(len(score_list_data))]

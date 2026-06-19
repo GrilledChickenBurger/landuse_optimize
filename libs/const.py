@@ -53,10 +53,10 @@ ALL_ES_TYPES_DICT = {
 }
 ALL_SCENARIOS = ["default", "enterprise", "farmer", "tourist"]
 ALL_SCENARIOS_DICT = {
-    "default": "base",
-    "enterprise": "enterprise",
-    "farmer": "farmer",
-    "tourist": "tourist",
+    "default": "基准",
+    "enterprise": "企业",
+    "farmer": "农民",
+    "tourist": "游客",
 }
 # 水源涵养计算：不同生态系统的地表径流系数 (按 LU 二级类精确赋值)
 # 数值单位为小数 (原始表为百分比, 除以 100 转换)
@@ -206,7 +206,7 @@ SCENARIO_COLOR_MAP = {
     "farmer": (153/255,195/255,217/255),
     "tourist": (159/255,188/255,194/255),
 }
-SA_GA_COLOR_MAP = {"SA": "#5B9BD5", "GA": "#ED7D31"}
+SA_GA_COLOR_MAP = {"SA": "#1976D2", "GA": "#FB8C00"}
 
 FACTOR_10_PARAMS_DICT={
     "DEM": {

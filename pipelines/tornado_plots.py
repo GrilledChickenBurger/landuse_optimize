@@ -14,9 +14,15 @@ from utils.stats_utils import (
     summarize_knob_significance,
 )
 
-# ── 全局字体: 英文 Times New Roman Bold + 中文回退 ──────────────
-from utils.visualize_utils import setup_plot_fonts
-setup_plot_fonts()
+# ── 统一论文字体: 英文 Times New Roman + 中文 SimSun ──────────────
+from utils.visualize_utils import setup_tornado_fonts
+
+FONT = setup_tornado_fonts()
+TITLE_PROP = FONT['title']
+LABEL_PROP = FONT['label']
+TICK_PROP = FONT['tick']
+LEGEND_PROP = FONT['legend']
+ANNOT_PROP = FONT['annot']
 # ──────────────────────────────────────────────────────────────────
 
 
@@ -27,6 +33,7 @@ TORNADO_PERFORMANCE_METRICS = [
     'Change_area.real_metrics.f1_score',
     'Landscape.land.best_plan.CONTAG',
     'Landscape.land.best_plan.SHEI',
+    'wall_time_sec',
 ]
 
 SENSITIVITY_METRICS = [
@@ -71,16 +78,23 @@ _THESIS_PARAM_NAMES = {
     # SA 专用参数
     'cooling_rate':               r'$\beta$',
     'T_start':                    r'$T_0$',
-    'max_noimprove_iter':         r'$N_{\mathrm{noimprove}}$',
-    'max_beststuck_iter':         r'$N_{\mathrm{beststuck}}$',
+    'max_noimprove_iter':         r'$N_{\mathrm{stall}}$',
+    'max_beststuck_iter':         r'$N_{\mathrm{stag}}$',
     # 通用参数
     'landscape.pure_base':        r'$\alpha_c$',
+    'landscape.pure_change':      r'$\beta_c$',
     'change_score.inside_reward_coef': r'$\gamma_{change}$',
     'tgt_function.lambda_ES_low': r'$\lambda_{ES}^{low}$',
     'tgt_function.lambda_ES_high': r'$\lambda_{ES}^{high}$',
     'tgt_function.lambda_LS_high': r'$\mu^{high}$',
-    'runner_utils.sigmoid_threshold': r'$\mu^{high}$',
     'tgt_function.lambda_LS_low': r'$\mu^{low}$',
+    'runner_utils.sigmoid_threshold': r'$\theta$',
+    # GA 专用参数
+    'ori_pop_size':               r'$N_{pop}$',
+    'crossover_rate':             r'$p_c$',
+    'mutation_rate':              r'$p_m$',
+    'max_noimprove_gen':          r'$G_{\mathrm{stall}}$',
+    'strategy.tournament_k':      r'$k$',
 }
 
 
@@ -118,9 +132,37 @@ RUN_PERFORMANCE_METRICS = [
 # 0. 通用读取 / 写表工具
 # ============================================================
 def _metric_short_name(metric: str) -> str:
-    """将 metric 名称压缩为适合图表显示的短名."""
-    if metric == 'es_score':
-        return 'ES Score'
+    """将 metric 内部名转换为中文短名."""
+    _MAP = {
+        'es_score': '生态系统服务得分',
+        'ES.food.best_ori_diff': '粮食供给（vs 原始）',
+        'ES.carbon.best_ori_diff': '碳汇（vs 原始）',
+        'ES.water.best_ori_diff': '水源涵养（vs 原始）',
+        'ES.culture.best_ori_diff': '文化服务（vs 原始）',
+        'ES.food.best_tgt_diff': '粮食供给（vs 目标）',
+        'ES.carbon.best_tgt_diff': '碳汇（vs 目标）',
+        'ES.water.best_tgt_diff': '水源涵养（vs 目标）',
+        'ES.culture.best_tgt_diff': '文化服务（vs 目标）',
+        'Change_area.real_metrics.iou': 'IoU（真实变化）',
+        'Change_area.real_metrics.f1_score': 'F1（真实变化）',
+        'Change_area.pred_metrics.iou': 'IoU（预测变化）',
+        'Change_area.pred_metrics.f1_score': 'F1（预测变化）',
+        'Landscape.land.best_plan.CONTAG': 'CONTAG',
+        'Landscape.land.best_plan.SHEI': 'SHEI',
+        'Landscape.land.best_plan.LPI': 'LPI',
+        'Landscape.land.best_plan.AI': 'AI',
+        'Landscape.land.best_plan.ED': 'ED',
+        'Landscape.land.best_plan.SHDI': 'SHDI',
+        'FINAL.FOM': 'FOM',
+        'FINAL.kappa': 'Kappa',
+        'final_best': '最终最优值',
+        'iter_to_95pct': '收敛至95%迭代数',
+        'wall_time_sec': '运行时间（秒）',
+        'total_iter': '总迭代数',
+    }
+    if metric in _MAP:
+        return _MAP[metric]
+    # 未映射的指标，做简单清理
     return (metric.replace('ES.', '')
             .replace('.best_ori_diff', '')
             .replace('.best_tgt_diff', '')
@@ -305,9 +347,9 @@ def plot_tornado(store: ExperimentResultStore,
         return f"{name}  (N/A)"
 
     ax.set_yticks(y_pos)
-    ax.set_yticklabels([_sig_label(k[0]) for k in knob_widths], fontsize=11)
-    ax.set_xlabel(f'{_metric_short_name(metric)} 归一化偏差\n（扰动值 − 基线）/ |基线|', fontsize=12)
-    ax.set_title(f'参数敏感度（{_metric_short_name(metric)}）\n基线 = {baseline_val:.4f}', fontsize=13)
+    ax.set_yticklabels([_sig_label(k[0]) for k in knob_widths], fontproperties=TICK_PROP)
+    ax.set_xlabel(f'{_metric_short_name(metric)} 归一化偏差\n（扰动值 − 基线）/ |基线|', fontproperties=LABEL_PROP)
+    ax.set_title(f'参数敏感度（{_metric_short_name(metric)}）\n基线 = {baseline_val:.4f}', fontproperties=TITLE_PROP)
     ax.grid(axis='x', linestyle='--', alpha=0.4)
     fig.tight_layout()
     fig.savefig(save_path, dpi=150)
@@ -425,12 +467,12 @@ def plot_tornado_composite(store: ExperimentResultStore,
     y_pos = np.arange(len(knobs_sorted))
     ax.barh(y_pos, scores, color='steelblue', alpha=0.7, edgecolor='black')
     ax.set_yticks(y_pos)
-    ax.set_yticklabels([_thesis_name(k) for k in knobs_sorted], fontsize=11)
-    ax.set_xlabel('综合敏感度得分（各指标等权）', fontsize=12)
-    ax.set_title('参数综合敏感度排名', fontsize=13)
+    ax.set_yticklabels([_thesis_name(k) for k in knobs_sorted], fontproperties=TICK_PROP)
+    ax.set_xlabel('综合敏感度得分（各指标等权）', fontproperties=LABEL_PROP)
+    ax.set_title('参数综合敏感度排名', fontproperties=TITLE_PROP)
     ax.grid(axis='x', linestyle='--', alpha=0.4)
     for i, score in enumerate(scores):
-        ax.text(score + 0.002, i, f'{score:.4f}', va='center', fontsize=9)
+        ax.text(score + 0.002, i, f'{score:.4f}', va='center', fontproperties=ANNOT_PROP)
     fig.tight_layout()
     chart_path = os.path.join(save_dir, 'tornado_composite.png')
     fig.savefig(chart_path, dpi=150)
@@ -445,8 +487,13 @@ _THESIS_METRIC_NAMES = {
     'es_score':                    r'$F_{eco}(S)$',
     'Change_area.real_metrics.iou':  r'$\mathrm{IoU}_{real}$',
     'Change_area.real_metrics.f1_score': r'$\mathrm{F1}_{real}$',
-    'Landscape.land.best_plan.CONTAG':  'CONTAG',
-    'Landscape.land.best_plan.SHEI':    'SHEI',
+    'Landscape.land.best_plan.CONTAG':  r'$\mathrm{CONTAG}$',
+    'Landscape.land.best_plan.SHEI':    r'$\mathrm{SHEI}$',
+    'ES.food.best_tgt_diff':       '粮食供给',
+    'ES.carbon.best_tgt_diff':     '碳汇',
+    'ES.water.best_tgt_diff':      '水源涵养',
+    'ES.culture.best_tgt_diff':    '文化服务',
+    'wall_time_sec':               '运行时间',
 }
 
 
@@ -463,6 +510,7 @@ def plot_tornado_heatmap(store: ExperimentResultStore,
     """Cohen's d 效应量热力图：行 = 参数扰动取值，列 = 评价指标。"""
     experiment_root = store.experiment_root
     metrics = metrics or TORNADO_PERFORMANCE_METRICS
+    plot_metrics = [m for m in metrics if m != 'wall_time_sec']
     save_path = save_path or os.path.join(experiment_root, 'plots', 'tornado_heatmap.png')
     ensure_folder(os.path.dirname(save_path))
 
@@ -540,38 +588,43 @@ def plot_tornado_heatmap(store: ExperimentResultStore,
     print(f"Tornado heatmap CSV saved: {csv_path}")
 
     # 颜色映射：红蓝渐变，负值偏蓝，正值偏红
-    abs_max = max(np.nanmax(np.abs(matrix)), 1.0)
+    # 图像排除 wall_time_sec 列
+    plot_cols = [j for j, m in enumerate(metrics) if m != 'wall_time_sec']
+    plot_n_cols = len(plot_cols)
+    plot_matrix = matrix[:, plot_cols]
+    abs_max = max(np.nanmax(np.abs(plot_matrix)), 1.0)
     cmap = plt.cm.RdBu_r
 
-    fig, ax = plt.subplots(figsize=(max(8, 1.6 * n_cols), max(4, 0.45 * n_rows)))
-    im = ax.imshow(matrix, cmap=cmap, vmin=-abs_max, vmax=abs_max, aspect='auto')
+    fig, ax = plt.subplots(figsize=(max(8, 1.6 * plot_n_cols), max(4, 0.45 * n_rows)))
+    im = ax.imshow(plot_matrix, cmap=cmap, vmin=-abs_max, vmax=abs_max, aspect='auto')
     ax.grid(False)
 
     # 刻度：x 轴用正文指标符号，y 轴用正文参数符号
-    ax.set_xticks(np.arange(n_cols))
-    ax.set_xticklabels([_thesis_metric_name(m) for m in metrics], fontsize=11)
+    ax.set_xticks(np.arange(plot_n_cols))
+    ax.set_xticklabels([_thesis_metric_name(m) for m in plot_metrics], fontproperties=TICK_PROP)
     ax.set_yticks(np.arange(n_rows))
-    ax.set_yticklabels(row_order, fontsize=10)
+    ax.set_yticklabels(row_order, fontproperties=TICK_PROP)
 
     # 单元格文字：d 值居中 + 右上角显著性星号
     for i in range(n_rows):
-        for j in range(n_cols):
-            val = matrix[i, j]
+        for pj, orig_j in enumerate(plot_cols):
+            val = plot_matrix[i, pj]
             if np.isnan(val):
                 continue
             color = 'white' if abs(val) > abs_max * 0.55 else 'black'
-            ax.text(j, i, f'{val:.2f}', ha='center', va='center', fontsize=9, color=color)
+            ax.text(pj, i, f'{val:.2f}', ha='center', va='center', color=color, fontproperties=ANNOT_PROP)
             # 右上角星号
-            stars = sig_matrix[i][j]
+            stars = sig_matrix[i][orig_j]
             if stars and stars != 'n.s.':
-                ax.text(j + 0.42, i - 0.38, stars, ha='right', va='top',
-                        fontsize=7, color=color, fontweight='bold')
+                ax.text(pj + 0.42, i - 0.38, stars, ha='right', va='top',
+                        color=color, fontproperties=ANNOT_PROP)
 
     # 色标
     cbar = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
-    cbar.set_label("Cohen's d", fontsize=11)
+    cbar.set_label("Cohen's d", fontproperties=LABEL_PROP)
+    cbar.ax.tick_params(labelsize=FONT['tick'].get_size())
 
-    ax.set_title("参数扰动效应量热力图", fontsize=13)
+    ax.set_title("参数扰动效应量热力图", fontproperties=TITLE_PROP)
     fig.tight_layout()
     fig.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
@@ -1172,10 +1225,11 @@ def plot_sensitivity_lines(store: ExperimentResultStore,
         y_means = [np.mean(vmap[x]) for x in x_vals]
         y_stds = [np.std(vmap[x], ddof=1) if len(vmap[x]) > 1 else 0.0 for x in x_vals]
         ax.errorbar(x_vals, y_means, yerr=y_stds, marker='o', capsize=4, linestyle='-')
-        ax.set_xlabel(param_path, fontsize=9)
-        ax.set_ylabel(metric, fontsize=9)
-        ax.set_title(f'Sensitivity: {param_path}', fontsize=10)
-        ax.grid(linestyle='--', alpha=0.4)
+        ax.set_xlabel(param_path, fontproperties=LABEL_PROP)
+        ax.set_ylabel(_metric_short_name(metric), fontproperties=LABEL_PROP)
+        ax.set_title(f'参数敏感度: {_thesis_name(param_path)}', fontproperties=TITLE_PROP)
+        ax.tick_params(labelsize=FONT['tick'].get_size())
+        ax.grid(linestyle='--', alpha=0.4, axis='y')
 
     for j in range(n_params, len(axes.flat)):
         axes.flat[j].set_visible(False)

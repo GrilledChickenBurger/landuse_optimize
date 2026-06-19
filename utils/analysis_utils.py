@@ -9,7 +9,7 @@ from .dataset_utils import load_tiff
 from .visualize_utils import *
 from .tools import ensure_folder, visualize_tensor_list, find_valid_file
 
-setup_plot_fonts()
+# 不再在模块导入时设置全局字体；各绘图函数按需调用 setup_paper_plot_fonts()。
 
 
 def calculate_subplot_layout(num_items: int, max_cols: int = 3, max_rows: int = None, 
@@ -529,17 +529,24 @@ def cal_scenario_diff_ratio(sa_total_area: dict, ga_total_area: dict,
     target = sa_total_area["target"]
     total_area = sum(origin.values())
 
+    # 字符串键 → int 键的统一转换（lu_order 可能传 "1"/"2"/...，但 dict 键为 int）
+    def _to_key(lc):
+        return int(lc) if isinstance(lc, str) and lc.isdigit() else lc
+
     valid_lu = []
     for lu_code in lu_order:
-        gap = abs(origin[lu_code] - target[lu_code])
+        key = _to_key(lu_code)
+        if key not in origin or key not in target:
+            continue
+        gap = abs(origin[key] - target[key])
         if gap >= gap_threshold:
-            valid_lu.append((lu_code, origin[lu_code], target[lu_code], gap))
+            valid_lu.append((lu_code, key, origin[key], target[key], gap))
 
     data = {}
     lu_directions = {}
     lu_ref_lines = {}
-    for lu_code, ori_val, tgt_val, gap in valid_lu:
-        lu_name = ALL_LU_LABELS_DICT.get(int(lu_code), lu_code)
+    for lu_code, key, ori_val, tgt_val, gap in valid_lu:
+        lu_name = ALL_LU_LABELS_DICT.get(key, lu_code)
         lu_directions[lu_name] = "increase" if tgt_val > ori_val else "decrease"
         data[lu_name] = {}
 
@@ -551,9 +558,9 @@ def cal_scenario_diff_ratio(sa_total_area: dict, ga_total_area: dict,
 
         for s_key in scenario_order:
             if s_key.startswith("SA_"):
-                scenario_val = sa_total_area[s_key[3:]][lu_code]
+                scenario_val = sa_total_area[s_key[3:]][key]
             else:
-                scenario_val = ga_total_area[s_key[3:]][lu_code]
+                scenario_val = ga_total_area[s_key[3:]][key]
 
             if y_scale == "ratio":
                 if signed_mode:
@@ -608,6 +615,10 @@ def visualize_by_type_bars(total_data_dict: Dict[str, Dict[Union[int, str], floa
     -----------
     - type_data_dict: 每个类型的总值变化字典，格式为 {类型: {场景: 总值}}
     """
+    FONT = setup_paper_plot_fonts()
+    title_prop = FONT['title']
+    annot_prop = FONT['annot']
+
     ensure_folder(save_folder)
     type_data_dict = {}
     
@@ -716,15 +727,15 @@ def visualize_by_type_bars(total_data_dict: Dict[str, Dict[Union[int, str], floa
                 subplot_labels[i],
                 xy=(0, 1), xycoords='axes fraction',
                 xytext=(+0.5, -0.5), textcoords='offset fontsize',
-                fontsize='medium', verticalalignment='top', fontfamily='serif',
+                verticalalignment='top', fontproperties=annot_prop,
                 bbox=dict(facecolor='none', edgecolor='none', pad=3.0))
-    
+
     # 隐藏多余的子图
     for j in range(num_types, len(combined_axes)):
         combined_axes[j].set_visible(False)
-    
+
     # 设置整体标题
-    combined_fig.suptitle(f"{total_title} - {data_type}类型对比", fontsize=16)
+    combined_fig.suptitle(f"{total_title} - {data_type}类型对比", fontproperties=title_prop)
     
     plt.tight_layout()
     plt.subplots_adjust(
@@ -882,8 +893,12 @@ def visualize_by_hist(sample_area_ratio_data_dict: Dict[str, Dict[int, List[floa
         - upper_bound: float, 默认0.95, 百分位方法上限，默认值为0.95
         - std_threshold: float, 默认3, 标准差阈值，默认值为3
     """
+    FONT = setup_paper_plot_fonts()
+    title_prop = FONT['title']
+    annot_prop = FONT['annot']
+
     ensure_folder(save_folder)
-    
+
     # 获取所有场景（default、enterprise、farmer、tourist）
     scenarios = list(sample_area_ratio_data_dict.keys())
     
@@ -967,9 +982,9 @@ def visualize_by_hist(sample_area_ratio_data_dict: Dict[str, Dict[int, List[floa
                 print(f"  警告: 子场景 {s} 中类型 {t} 没有数据")
                 # 创建空的子图
                 ax = combined_axes[i]
-                ax.text(0.5, 0.5, f"{t_name}\n无数据", 
-                       ha='center', va='center', transform=ax.transAxes, fontsize=12)
-                ax.set_title(t_name)
+                ax.text(0.5, 0.5, f"{t_name}\n无数据",
+                       ha='center', va='center', transform=ax.transAxes, fontproperties=annot_prop)
+                ax.set_title(t_name, fontproperties=annot_prop)
                 ax = handle_axes(ax)
                 continue
             
@@ -1008,17 +1023,17 @@ def visualize_by_hist(sample_area_ratio_data_dict: Dict[str, Dict[int, List[floa
                     subplot_labels[i],
                     xy=(0, 1), xycoords='axes fraction',
                     xytext=(+0.5, -0.5), textcoords='offset fontsize',
-                    fontsize='medium', verticalalignment='top', fontfamily='serif',
+                    verticalalignment='top', fontproperties=annot_prop,
                     bbox=dict(facecolor='none', edgecolor='none', pad=3.0))
-        
+
         # 隐藏多余的子图
         for j in range(num_types, len(combined_axes)):
             combined_axes[j].set_visible(False)
-        
+
         # 设置整体标题
         title_prefix = f"{comparison_type} - " if comparison_type else ""
         data_type = "ES" if is_es_data else "LU"
-        combined_fig.suptitle(f"{title_prefix}{s} - {data_type}类型{'ES' if is_es_data else '面积'}变化分布对比图", fontsize=16)
+        combined_fig.suptitle(f"{title_prefix}{s} - {data_type}类型{'ES' if is_es_data else '面积'}变化分布对比图", fontproperties=title_prop)
         
         plt.tight_layout()
         plt.subplots_adjust(
@@ -1074,8 +1089,12 @@ def visualize_by_box(sample_area_ratio_data_dict: Dict[str, Dict[int, List[float
         - widths: float, 默认0.5, 箱体宽度
         - whis: float, 默认1.5, 须线范围
     """
+    FONT = setup_paper_plot_fonts()
+    title_prop = FONT['title']
+    annot_prop = FONT['annot']
+
     ensure_folder(save_folder)
-    
+
     # 获取所有场景（default、enterprise、farmer、tourist）
     scenarios = list(sample_area_ratio_data_dict.keys())
     
@@ -1176,9 +1195,9 @@ def visualize_by_box(sample_area_ratio_data_dict: Dict[str, Dict[int, List[float
             print(f"  警告: 类型 {t} 在所有场景中都没有数据")
             # 创建空的子图
             ax = combined_axes[i]
-            ax.text(0.5, 0.5, f"{t_name}\n无数据", 
-                   ha='center', va='center', transform=ax.transAxes, fontsize=12)
-            ax.set_title(t_name)
+            ax.text(0.5, 0.5, f"{t_name}\n无数据",
+                   ha='center', va='center', transform=ax.transAxes, fontproperties=annot_prop)
+            ax.set_title(t_name, fontproperties=annot_prop)
             ax = handle_axes(ax)
             continue
         
@@ -1220,17 +1239,17 @@ def visualize_by_box(sample_area_ratio_data_dict: Dict[str, Dict[int, List[float
                 subplot_labels[i],
                 xy=(0, 1), xycoords='axes fraction',
                 xytext=(+0.5, -0.5), textcoords='offset fontsize',
-                fontsize='medium', verticalalignment='top', fontfamily='serif',
+                verticalalignment='top', fontproperties=annot_prop,
                 bbox=dict(facecolor='none', edgecolor='none', pad=3.0))
-    
+
     # 隐藏多余的子图
     for j in range(num_types, len(combined_axes)):
         combined_axes[j].set_visible(False)
-    
+
     # 设置整体标题
     title_prefix = f"{comparison_type} - " if comparison_type else ""
     data_type = "ES" if is_es_data else "LU"
-    combined_fig.suptitle(f"{title_prefix}所有{data_type}类型在不同场景下的{'ES' if is_es_data else '面积'}变化分布对比", fontsize=16)
+    combined_fig.suptitle(f"{title_prefix}所有{data_type}类型在不同场景下的{'ES' if is_es_data else '面积'}变化分布对比", fontproperties=title_prop)
     
     plt.tight_layout()
     plt.subplots_adjust(
@@ -1254,13 +1273,13 @@ def visualize_by_box(sample_area_ratio_data_dict: Dict[str, Dict[int, List[float
 
 def handle_axes(ax: plt.Axes):
     """
-    处理子图轴样式，设置浅灰色边框和网格线
+    处理子图轴样式，设置黑色边框和仅水平网格线
     """
-    ax.spines['top'].set_color('lightgray')
-    ax.spines['right'].set_color('lightgray')
-    ax.spines['bottom'].set_color('lightgray')
-    ax.spines['left'].set_color('lightgray')
-    ax.grid(True, linestyle='--', alpha=0.7, color='lightgray')
+    ax.spines['top'].set_color('black')
+    ax.spines['right'].set_color('black')
+    ax.spines['bottom'].set_color('black')
+    ax.spines['left'].set_color('black')
+    ax.grid(True, linestyle='--', alpha=0.7, color='lightgray', axis='y')
     plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
     plt.setp(ax.get_yticklabels(), fontsize=12)
     plt.setp(ax.get_xticklabels(), fontsize=12)
@@ -1791,7 +1810,7 @@ def get_subplot_default_labels(num_types: int,
 def parallel_show(img_folder1: str, img_folder2: str, desc1: str, desc2: str, save_folder: str = "comparison_results"):
     """
     同时显示SA和GA优化结果的对比图
-    
+
     参数:
         img_folder1: 文件夹路径1
         img_folder2: 文件夹路径2
@@ -1802,51 +1821,55 @@ def parallel_show(img_folder1: str, img_folder2: str, desc1: str, desc2: str, sa
     import os
     import cv2
     import matplotlib.pyplot as plt
-    
+
+    FONT = setup_paper_plot_fonts()
+    title_prop = FONT['title']
+    annot_prop = FONT['annot']
+
     # 获取两个文件夹中的所有PNG文件
     sa_files = sorted([f for f in os.listdir(img_folder1) if f.endswith('.png')])
     ga_files = sorted([f for f in os.listdir(img_folder2) if f.endswith('.png')])
-    
+
     # 找出两个文件夹中共同的文件名
     common_files = sorted(list(set(sa_files) & set(ga_files)))
-    
+
     if not common_files:
         print("警告：两个文件夹中没有共同的PNG文件")
         return
-    
+
     print(f"找到 {len(common_files)} 个共同的PNG文件")
-    
+
     # 创建2x1的子图布局
     fig, axes = plt.subplots(2, 1, figsize=(12, 10))
-    
+
     # 设置子图标题
-    axes[0].set_title(desc1, fontsize=14, fontweight='bold')
-    axes[1].set_title(desc2, fontsize=14, fontweight='bold')
-    
+    axes[0].set_title(desc1, fontproperties=title_prop)
+    axes[1].set_title(desc2, fontproperties=title_prop)
+
     # 为每个共同的文件创建对比图
     for filename in common_files:
         # 读取SA图片
         sa_path = os.path.join(img_folder1, filename)
         sa_img = cv2.imread(sa_path)
         sa_img = cv2.cvtColor(sa_img, cv2.COLOR_BGR2RGB)  # 转换颜色空间
-        
+
         # 读取GA图片
         ga_path = os.path.join(img_folder2, filename)
         ga_img = cv2.imread(ga_path)
         ga_img = cv2.cvtColor(ga_img, cv2.COLOR_BGR2RGB)  # 转换颜色空间
-        
+
         # 清除之前的图像
         axes[0].clear()
         axes[1].clear()
-        
+
         # 显示SA图片
         axes[0].imshow(sa_img)
-        axes[0].set_title(f'{desc1} - {filename}', fontsize=12)
+        axes[0].set_title(f'{desc1} - {filename}', fontproperties=annot_prop)
         axes[0].axis('off')
-        
+
         # 显示GA图片
         axes[1].imshow(ga_img)
-        axes[1].set_title(f'{desc2} - {filename}', fontsize=12)
+        axes[1].set_title(f'{desc2} - {filename}', fontproperties=annot_prop)
         axes[1].axis('off')
         
         # 调整布局

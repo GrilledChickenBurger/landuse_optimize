@@ -10,6 +10,10 @@ import torch
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 
+from utils.visualize_utils import setup_large_plot_fonts
+
+FONT = setup_large_plot_fonts()
+
 # 向后兼容 re-exports (旧代码仍可用 from utils.tools import get_yaml, ensure_folder 等)
 from .config_utils import (get_yaml, get_namespace, get_default_score_cfg, load_score_cfg,
                            _DEFAULT_SCORE_CFG_DICT)
@@ -119,8 +123,8 @@ def convert_to_nparray(array: Any) -> Optional[np.ndarray]:
 
 
 def draw_single_line(x_data: List[float], y_data: List[float],
-                    label: str, x_label: str, y_label: str, 
-                    title: Optional[str] = None, 
+                    label: str, x_label: str, y_label: str,
+                    title: Optional[str] = None,
                     save_path: Optional[str] = None):
     """
     绘制只有一组数据的折线图。
@@ -133,22 +137,29 @@ def draw_single_line(x_data: List[float], y_data: List[float],
         title: str, 标题
         save_path: str, 保存路径
     """
-    plt.figure(figsize=(40,20))
+    tick_prop = FONT['tick']
+    label_prop = FONT['label']
+    title_prop = FONT['title']
+    legend_prop = FONT['legend']
+
+    plt.figure(figsize=(40, 20))
     plt.plot(x_data, y_data, label=label, linewidth=4)
-    plt.xlabel(x_label, fontsize = 24)
-    plt.ylabel(y_label, fontsize = 24)
-    plt.title(title if title is not None else "Result", fontsize = 30)
-    plt.tick_params(labelsize=20)     #调整坐标轴数字大小
-    plt.legend(prop = {'size':20})
-    plt.grid(True)
-    
+    plt.xlabel(x_label, fontproperties=label_prop)
+    plt.ylabel(y_label, fontproperties=label_prop)
+    plt.title(title if title is not None else "Result", fontproperties=title_prop)
+    plt.tick_params(labelsize=tick_prop.get_size())
+    plt.xticks(fontproperties=tick_prop)
+    plt.yticks(fontproperties=tick_prop)
+    plt.legend(prop=legend_prop)
+    plt.grid(True, axis='y', alpha=0.5, color='gray', linestyle='--')
+
     if save_path is not None:
         plt.savefig(save_path)
     plt.close()
 
-def draw_multi_line(x_data: List[float], y_datas: List[List[float]], 
-                    labels: List[str], x_label: str, y_label: str, 
-                    title: Optional[str] = None, 
+def draw_multi_line(x_data: List[float], y_datas: List[List[float]],
+                    labels: List[str], x_label: str, y_label: str,
+                    title: Optional[str] = None,
                     save_path: Optional[str] = None):
     """
     绘制多组数据的折线图。
@@ -161,16 +172,23 @@ def draw_multi_line(x_data: List[float], y_datas: List[List[float]],
         title: str, 标题
         save_path: str, 保存路径
     """
-    plt.figure(figsize=(40,20))
+    tick_prop = FONT['tick']
+    label_prop = FONT['label']
+    title_prop = FONT['title']
+    legend_prop = FONT['legend']
+
+    plt.figure(figsize=(40, 20))
     for y_data, label in zip(y_datas, labels):
         plt.plot(x_data, y_data, label=label, linewidth=4)
-    plt.xlabel(x_label, fontsize = 24)
-    plt.ylabel(y_label, fontsize = 24)
-    plt.title(title if title is not None else "Result", fontsize = 30)
-    plt.tick_params(labelsize=20)     #调整坐标轴数字大小
-    plt.legend(prop = {'size':20})
-    plt.grid(True)
-    
+    plt.xlabel(x_label, fontproperties=label_prop)
+    plt.ylabel(y_label, fontproperties=label_prop)
+    plt.title(title if title is not None else "Result", fontproperties=title_prop)
+    plt.tick_params(labelsize=tick_prop.get_size())
+    plt.xticks(fontproperties=tick_prop)
+    plt.yticks(fontproperties=tick_prop)
+    plt.legend(prop=legend_prop)
+    plt.grid(True, axis='y', alpha=0.5, color='gray', linestyle='--')
+
     if save_path is not None:
         plt.savefig(save_path)
     plt.close()
@@ -255,17 +273,19 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor],
         axes = axes.flatten()  # 二维数组展平
     
     # 设置主标题
+    title_prop = FONT['title']
+    annot_prop = FONT['annot']
     if main_title:
-        fig.text(0.1, 0.9, main_title, ha='left', va='baseline', fontsize=16, color='black', fontweight='bold')  
+        fig.text(0.1, 0.9, main_title, ha='left', va='baseline', fontproperties=title_prop, color='black')
         # fig.suptitle(main_title, fontsize=16, fontweight='bold')
     # 绘制每个张量
     for i, (title, nparr) in enumerate(processed_tensors.items()):
             ax = axes[i]
             # 使用自定义颜色映射或默认颜色映射
-            if isinstance(color_map, dict):                
+            if isinstance(color_map, dict):
                 # 获取张量中的唯一值
                 unique_values = np.unique(nparr)
-                
+
                 # 创建颜色映射数组
                 cmap_values = []
                 for val in unique_values:
@@ -274,23 +294,23 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor],
                     else:
                         # 对于没有在color_map中定义的值，使用灰色
                         cmap_values.append((0.5, 0.5, 0.5))
-                
+
                 # 创建自定义颜色映射
                 custom_cmap = ListedColormap(cmap_values)
-                
+
                 # 将原始张量数据映射到新的索引
                 mapped_data = np.zeros_like(nparr, dtype=int)
                 for idx, val in enumerate(unique_values):
                     mapped_data[nparr == val] = idx
-                
+
                 # 绘制热图
                 im = ax.imshow(mapped_data, cmap=custom_cmap)
-                
+
                 # 添加颜色条并自定义标签（如果启用）
                 if show_colorbar:
                     cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
                     cbar.set_ticks(range(len(unique_values)))
-                    cbar.set_ticklabels([str(int(v)) if isinstance(v, (int, np.integer)) else str(v) for v in unique_values])
+                    cbar.ax.set_yticklabels([str(int(v)) if isinstance(v, (int, np.integer)) else str(v) for v in unique_values], fontproperties=annot_prop)
             elif isinstance(color_map, str):
                 # 使用默认颜色映射
                 im = ax.imshow(nparr, cmap=color_map)
@@ -301,9 +321,9 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor],
                 im = ax.imshow(nparr, cmap='viridis')
                 if show_colorbar:
                     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            
+
             # 设置标题
-            ax.set_title(title)
+            ax.set_title(title, fontproperties=annot_prop)
             ax.axis('off')  # 关闭坐标轴
     
     # 隐藏多余的子图
