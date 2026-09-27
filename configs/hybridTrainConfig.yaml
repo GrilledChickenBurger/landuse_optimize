@@ -1,0 +1,155 @@
+# 混合训练集训练配置
+# 遍历 attunet/segformer/transunet 三个模型，依次训练。
+# 训练集使用 HybridDataset（10-15 与 15-20 两个来源各自贡献变化/未变化样本，变化样本按配额增强），
+# 训练期验证集使用 val split 的 15-20 时间对；最终 sweep 使用 15-20 全量（train+val）口径。
+device:
+  use_gpu: true
+
+# 混合训练集专属配置
+hybrid:
+  model_list: ["attunet", "segformer", "transunet"] # 依次训练的模型
+  # 推导链: 由下面 4 个参数算出数据增强配额, 再以增强后变化样本数为基准算未变化样本数。
+  #   raw_1015 = round(r1 × a), raw_1520 = round(r2 × b)        (a/b 为 train+val 变化池容量)
+  #   Q = round(N × r_cu / (1 + r_cu))                          (目标增强后变化总数)
+  #   Q_1015 = round(Q × raw_1015 / (raw_1015 + raw_1520)), Q_1520 = Q - Q_1015
+  #   组内配额: 每样本 1 份原始 + base 份副本, 随机 rem 个样本再各多 1 份 => 精确命中 Q
+  #   unchanged_g = round(Q_g / r_cu), 从同来源未变化池无放回抽取
+  # 实测池子容量 (train+val 合计):
+  #   10-15: 变化 a=294,  未变化 u_a=1521
+  #   15-20: 变化 b=593,  未变化 u_b=1222
+  # r2=1、r_cu=1 时 N 的可行区间交集为 [1774, 2444]（瓶颈是 15-20 未变化池 1222），推荐 N=2000。
+  # 注意 r1=0 时未变化全部落在 15-20 池，N 上限收窄到 2444；若要用更大的 N，需把 r1 抬到 0.05 以上。
+  # 若 N 过小或 r1 过大，构造时会直接报错并给出当前档位的可行区间。
+  train_size: 2500 # 目标训练集样本量 N
+  ratio_1015: 0.5 # r1: 10-15 变化样本加入比例 (占 10-15 变化池, train+val)
+  ratio_1520: 1.0 # r2: 15-20 变化样本加入比例 (占 15-20 变化池, train+val)
+  changed_unchanged_ratio: 1.0 # r_cu: 变化:非变化 目标比例 (1.0 表示 1:1)
+  seed: 0 # 抽样与增强的随机种子
+
+# 最终评测口径 (阈值扫描阶段)
+sweep:
+  eval_split: "all" # "all" = 15-20 的 train+val 全量; "val" = 仅 val split
+
+# 验证结果归档路径 (模板变量: {model_name} / {run_timestamp})
+result:
+  model_perf_dir: "results\\_model_performance\\{model_name}\\{run_timestamp}"
+  sweep_dir: "results\\_model_performance\\threshold_sweep\\{run_timestamp}"
+
+# 数据配置（训练集用 HybridDataset, 训练期验证集复用 TrainingDataset）
+data:
+  root: "_data\\training_data"
+  shape: [1, 128, 128]
+  factor_list: ["DEM", "DL", "GDP", "RK"]
+  shuffle: true
+  normalize: true
+  batch_size: 4 # 默认批次大小 (attunet)
+  batch_size_overrides: # 按模型覆写 (参考 optimizer.default + 分模型覆写模式)
+    unet: 8
+    segformer: 8
+    transunet: 1 # transunet 最大, 4GB 显存限制下保持 1
+  only_changed: false # 供训练期验证集 TrainingDataset 构造使用
+
+training:
+  # 损失函数: "original" = 各模型逐一对齐原始文献/官方实现:
+  #             attunet   → Sørensen-Dice (smooth=0.01, 官方 SoftDiceLoss)
+  #             unet      → 逐像素 softmax + 加权交叉熵 + weight map (w0=10, sigma=5)
+  #             segformer → 未加权 CrossEntropy (≡ BCE)
+  #             transunet → 0.5*CE + 0.5*Dice (smooth=1e-5, 官方实现)
+  #             vit       → 未加权 softmax CE (≡ BCE, 无 label smoothing/mixup)
+  #             fcn       → 未加权 CrossEntropy (≡ BCE)
+  #             swin      → label smoothing 0.1 的 BCE (官方关闭 mixup 时的 LabelSmoothingCE 分支; mixup 未引入)
+  #             convlstm / cgan → 暂回退 0.5*BCE + 0.5*Dice (cgan 对抗损失需双网络; convlstm 原论文为回归)
+  #           "focal_dice" = 统一 Focal+Dice 各 0.5 (保证多模型结构公平对比)
+  loss_type: "original"
+  save_frequency: 20
+  print_frequency: 50
+  visualize_frequency: 200
+  num_epochs: 100
+  is_tensorboard: true
+  log_frequency: 4
+  log_dir: "logs\\{model_name}\\{run_timestamp}"
+  checkpoint_dir: "checkpoints\\{model_name}\\{run_timestamp}"
+
+optimizer:
+  default:
+    name: "adam"
+    learning_rate: 0.0001
+    weight_decay: 0.00001
+    beta_1: 0.9
+    amsgrad: false
+    epsilon: 0.00000001
+    gradient_clip: 1.0
+  segformer:
+    name: "adamw"
+    learning_rate: 0.00005
+    weight_decay: 0.0001
+    beta_1: 0.9
+    amsgrad: false
+    epsilon: 0.00000001
+    gradient_clip: 1.0
+  vit:
+    name: "adamw"
+    learning_rate: 0.00005
+    weight_decay: 0.0001
+    beta_1: 0.9
+    amsgrad: false
+    epsilon: 0.00000001
+    gradient_clip: 1.0
+  swin:
+    name: "adamw"
+    learning_rate: 0.00005
+    weight_decay: 0.0001
+    beta_1: 0.9
+    amsgrad: false
+    epsilon: 0.00000001
+    gradient_clip: 1.0
+
+validation:
+  split: "val"
+  pack: [[15, 20]]
+  batch_size: 1
+  shuffle: false
+
+model:
+  segformer:
+    dims: [32, 64, 160, 256]
+    heads: [1, 2, 5, 8]
+    ff_expansion: [8, 8, 4, 4]
+    reduction_ratio: [8, 4, 2, 1]
+    num_layers: 2
+    decoder_dim: 256
+  transunet:
+    img_size: 128
+
+  # 新增模型配置说明见 trainConfig.yaml 的 model 节
+  convlstm:
+    filters: [64, 128, 256, 512]
+    kernel_size: 3
+    num_layers: 1
+    bias: true
+  cgan:
+    num_downs: 7
+    ngf: 64
+    norm: "batch"
+    use_dropout: false
+    output_activation: null
+  vit:
+    img_size: 128
+    patch_size: 8
+    dim: 384
+    depth: 12
+    heads: 6
+    mlp_ratio: 4.0
+    dropout: 0.0
+    attn_dropout: 0.0
+    decoder_dim: 256
+  swin:
+    img_size: 128
+    patch_size: 4
+    embed_dim: 96
+    depths: [2, 2, 6, 2]
+    num_heads: [3, 6, 12, 24]
+    window_size: 7
+    mlp_ratio: 4.0
+    drop_path_rate: 0.1
+    decoder_dim: 256

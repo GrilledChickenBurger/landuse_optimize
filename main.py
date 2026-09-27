@@ -3,6 +3,8 @@ import random
 from pipelines.run_runner import pipeline
 from pipelines.experiment import experiment_pipeline
 from pipelines.train import training_pipeline,valid_pipeline, get_changed_indices
+from pipelines.hybrid_train import hybrid_train_pipeline
+from pipelines.threshold_sweep import threshold_sweep_pipeline
 from pipelines.statistic import get_params
 from pipelines.ablation import ablation_pipeline
 from pipelines.tornado import tornado_pipeline
@@ -43,6 +45,14 @@ def run_valid_pipeline():
     model_checkpoint_path = os.path.join("checkpoints","transunet","20260214_052453","best_model.pth")
 
     valid_pipeline(config_path, model_checkpoint_path, only_changed=False, datasets=["val"])
+
+def run_hybrid_train_pipeline():
+    config_path = os.path.join("configs","hybridTrainConfig.yaml")
+    hybrid_train_pipeline(config_path)
+
+def run_threshold_sweep_pipeline():
+    config_path = os.path.join("configs","trainConfig.yaml")
+    threshold_sweep_pipeline(config_path)
 
 def run_get_changed_indices_pipeline():
     config_path = os.path.join("configs","trainConfig.yaml")
@@ -248,16 +258,21 @@ if __name__ == "__main__":
     # pass
     # run_train_pipeline()
     # run_valid_pipeline()
+    run_hybrid_train_pipeline()
     # run_runner_pipeline()
     # run_experiment_pipeline()
     # run_ablation_pipeline()
-    run_ablation_plots_pipeline(
-        experiment_root='results/ablation/20260607_210931',
-        sibling_experiment_roots=['results/ablation/20260608_185005'],
-        mode='stability',
-        show_runtime=True,
-    )
-    # run_tornado_pipeline(3)
+    # run_ablation_plots_pipeline(
+    #     experiment_root='results/ablation/20260607_210931',
+    #     sibling_experiment_roots=['results/ablation/20260610_163941'],
+    #     mode='stability',
+    #     show_runtime=False,
+    #     combined_only=True
+    # )
+    # run_results_analysis_pipeline()
+    # run_tornado_pipeline()
     # run_sensitivity_pipeline()
-    # run_tornado_plots_pipeline()
-    pass
+    # run_tornado_plots_pipeline(mode='tornado',experiment_root='results/tornado/20260606_033319')
+    # run_tornado_plots_pipeline(mode='tornado',experiment_root='results/tornado/20260611_023835')
+    # run_tornado_plots_pipeline(mode='tornado',experiment_root='results/tornado/20260620_220209')
+    # pass

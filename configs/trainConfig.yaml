@@ -65,9 +65,13 @@ optimizer: # 优化器配置
 
 validation:
   split: "val" # train|valid, 训练集或验证集
-  pack: [[10, 15]] # 验证数据时间范围，每个子列表为[start_year, end_year], [-1,-1]表示全部时间范围
+  pack: [[15, 20]] # 验证数据时间范围，每个子列表为[start_year, end_year], [-1,-1]表示全部时间范围
   batch_size: 1 # 批次大小
   shuffle: false # 是否打乱数据
+
+# 阈值扫描结果保存路径 (模板变量: {run_timestamp}), 供 threshold_sweep_pipeline 使用
+result:
+  sweep_dir: "results\\_model_performance\\threshold_sweep\\{run_timestamp}"
 
 model:
   segformer:
