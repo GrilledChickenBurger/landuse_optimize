@@ -46,12 +46,7 @@ model:
     num_layers: 2
     decoder_dim: 128
   transunet:
-    img_dim: 128
-    out_channels: 32
-    head_num: 4
-    mlp_dim: 512
-    block_num: 4
-    patch_dim: 16
+    img_size: 128
 
 runner: # 随机优化算法通用参数
   type: "GA"
