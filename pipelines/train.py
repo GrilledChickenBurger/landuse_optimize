@@ -387,7 +387,7 @@ def get_changed_indices(config_path: str, datasets: List[str] = ['train', 'val']
     return changed_indices
 
 
-def process_batch(data_pack: List[torch.Tensor], model: nn.Module, device: torch.device):
+def process_batch(data_pack: List[torch.Tensor], model: nn.Module, device: torch.device, loss_fn=None):
     """
     处理一个批次的数据，计算损失。
     PS: 这里的损失函数是 BCEWithLogitsLoss，不需要手动激活输出，outputs是模型的原始输出。
@@ -399,6 +399,7 @@ def process_batch(data_pack: List[torch.Tensor], model: nn.Module, device: torch
             包含驱动因子、srcLU、tgtLU、idx_label、changed_flag
         model: nn.Module 训练的模型
         device: torch.device 设备（CPU或GPU）
+        loss_fn: callable, 可选。传入则使用该损失函数; 为 None 时使用默认 Focal+Dice
 
     Returns:
     -------
@@ -418,7 +419,10 @@ def process_batch(data_pack: List[torch.Tensor], model: nn.Module, device: torch
     diff = remove_lines_forbatch(diff.cpu()).to(device)
 
     outputs = model(inputs)
-    loss = tUtils.cal_loss(outputs, diff)
+    if loss_fn is not None:
+        loss = loss_fn(outputs, diff)
+    else:
+        loss = tUtils.cal_loss(outputs, diff)
     return loss, outputs, diff
 
 def visualize_outputs(outputs: torch.Tensor, diff: torch.Tensor, epoch: int, step: int, save_path: str = None, isvalid: bool = False):
