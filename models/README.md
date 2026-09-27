@@ -28,6 +28,10 @@ Stage-1 训练得到的模型在 Stage-2 优化阶段被**复用**：`utils/runn
 | `unet.py`      | `U_Net` 和 `AttU_Net`（注意力门控 U-Net）；文件中还有 R2U_Net、NestedUNet 等未启用 |
 | `segformer.py` | `Segformer`：MiT 编码器 + 轻量 MLP 解码器                                          |
 | `transunet.py` | `TransUNet`：ResNet 风格编码器 + ViT 瓶颈 + U-Net 解码器                           |
+| `convlstm.py`  | `ConvLSTM_Seg`：4 级 ConvLSTM 编码器 + U-Net 风格解码器                            |
+| `cgan.py`      | `CGAN`：pix2pix 的 U-Net 生成器（只含生成器，不含判别器）                          |
+| `vit.py`       | `ViT`：ViT 编码器（cls token 丢弃）+ 轻量上采样分割头                              |
+| `swin.py`      | `Swin`：Swin Transformer 4-stage 编码器 + 多尺度轻量解码器                         |
 
 ## 工厂函数 `create_model`
 
@@ -35,10 +39,10 @@ Stage-1 训练得到的模型在 Stage-2 优化阶段被**复用**：`utils/runn
 create_model(model_type: str, in_ch: int, out_ch: int, model_config: dict = None)
 ```
 
-- `model_type` ∈ {`attunet`, `unet`, `fcn`, `segformer`, `transunet`}
+- `model_type` ∈ {`attunet`, `unet`, `fcn`, `segformer`, `transunet`, `convlstm`, `cgan`, `vit`, `swin`}
 - `in_ch` = `len(factor_list) + 6`（4 个驱动因子 + 6 类简化 LU 的 one-hot）= 10
 - `out_ch` = 1（二分类变化掩码，输出为 raw logits，损失函数内部做 sigmoid）
-- `model_config` 来自 `configs/trainConfig.yaml` 的 `model.<type>` 节；仅 `segformer` 和 `transunet` 在 YAML 中配置，其余使用代码默认值
+- `model_config` 来自 `configs/trainConfig.yaml` 的 `model.<type>` 节；`segformer`、`transunet`、`convlstm`、`cgan`、`vit`、`swin` 均在 YAML 中配置，`attunet`/`unet`/`fcn` 使用代码默认值
 
 工厂会把 `argparse.Namespace` 自动转成 `dict` 以兼容 YAML 加载方式。
 
@@ -214,15 +218,106 @@ CNN-Transformer 混合模型：ResNet 风格编码器提取多尺度特征 → V
 
 **特点**：ViT 位于最窄处（8×8），三个编码器跳跃绕过 ViT 直连解码器；CNN 部分用 BN+ReLU，ViT 部分用 LN+GELU+Dropout(0.1)；约 **~10-13M 参数**。
 
-## 五模型对比
+## ConvLSTM（`convlstm.py`）
+
+论文 Convolutional LSTM Network（Shi et al., NeurIPS 2015, arXiv:1506.04214）。PyTorch 官方仓库没有 ConvLSTM，论文官方代码是 Torch/Lua 版，故采用社区引用最多的 PyTorch 实现 [ndrplz/ConvLSTM_pytorch](https://github.com/ndrplz/ConvLSTM_pytorch)，`ConvLSTMCell` / `ConvLSTM` 与上游逐行一致。
+
+**`ConvLSTMCell`**（门控在卷积特征图上逐元素运算，而非全连接）
+
+```
+combined = cat([x_t, h_{t-1}], dim=1)            # (C+H) 通道
+i, f, o, g = split(Conv2d(combined))             # 4H 通道; i/f/o 过 sigmoid, g 过 tanh
+c_t = f ⊙ c_{t-1} + i ⊙ g
+h_t = o ⊙ tanh(c_t)
+```
+
+**`ConvLSTM`**：多层堆叠、逐时间步递推，输入 `(B,T,C,H,W)`（`batch_first=True`）或 `(T,B,C,H,W)`，返回 `(每层输出序列, 每层末态)`。
+
+**`ConvLSTM_Seg`**（上游只有序列层，编解码网络为本项目新增）
+
+| 阶段 | 模块 | 通道 | 分辨率 |
+| ---- | ---- | ---- | ------ |
+| enc1 | ConvLSTM | 10 → 64 | 128×128 |
+| enc2 | MaxPool + ConvLSTM | 64 → 128 | 64×64 |
+| enc3 | MaxPool + ConvLSTM | 128 → 256 | 32×32 |
+| enc4 | MaxPool + ConvLSTM | 256 → 512 | 16×16 |
+| bottleneck | MaxPool + ConvLSTM | 512 → 512 | 8×8 |
+
+- 每级取**最后时刻**的隐状态 `h_T` 作为该级空间跳跃特征（T=1 时就是该级输出）
+- 解码器：`up_conv`（nearest×2 + Conv3×3-BN-ReLU）+ concat 跳跃 + `conv_block`，通道 512→256→128→64，输出头 `Conv2d(64, 1, 1)`
+- 输入兼容 `(B,C,H,W)`（自动按 T=1 处理）与 `(B,T,C,H,W)`；本项目默认 T=1，此时 ConvLSTM 退化为带输入/遗忘/输出门的门控卷积
+- 参数量约 **~42.4M**
+
+## 条件 GAN / pix2pix 生成器（`cgan.py`）
+
+论文 Image-to-Image Translation with Conditional Adversarial Networks（Isola et al., CVPR 2017, arXiv:1611.07004），实现对齐 [junyanz/pytorch-CycleGAN-and-pix2pix](https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix) 官方 `models/networks.py` 的 `UnetGenerator` / `UnetSkipConnectionBlock`。
+
+**只移植生成器，不含判别器**：`create_model()` 返回单网络、训练循环是 `model(x) -> logits` 模式，生成器本身的 U-Net 结构即可作为逐像素预测网络单独训练并与其余模型公平对比。
+
+**`UnetSkipConnectionBlock`**（自内向外递归构建，每级都是"下采样 → 子模块 → 上采样 + 同分辨率 concat"）
+
+| 位置 | 下采样 | 上采样 | 归一化 |
+| ---- | ------ | ------ | ------ |
+| outermost | `Conv4×4 s2 p1` | `ConvTranspose4×4 s2 p1` + ReLU | 无 |
+| innermost | `LeakyReLU(0.2)` + `Conv4×4 s2 p1` | `ConvTranspose4×4 s2 p1` + ReLU | 有 |
+| 中间层 | `LeakyReLU(0.2)` + `Conv4×4 s2 p1` | `ConvTranspose4×4 s2 p1` + ReLU | 有 |
+
+- 与官方的两处差异：① outermost 去掉官方 `nn.Tanh()`，默认输出 raw logits（本项目用 BCE/Focal-Dice），`output_activation="tanh"` 可还原官方行为；② 输入是 128×128，`num_downs` 由官方 256 版的 8 改为 **7**（128/2⁷ = 1，瓶颈 1×1）
+- 默认 `ngf=64`、`norm="batch"`（官方 `define_G` 默认值，CycleGAN 用 instance）、`use_dropout=False`
+- 参数量约 **~41.8M**
+
+## ViT（`vit.py`）
+
+论文 An Image is Worth 16x16 Words（Dosovitskiy et al., ICLR 2021, arXiv:2010.11929）。官方实现 [google-research/vision_transformer](https://github.com/google-research/vision_transformer) 只有 JAX/Flax 版且只做分类，本文件按官方结构用 PyTorch 重写并补分割头。
+
+| 官方模块（Flax） | 本文件实现 |
+| ---------------- | ---------- |
+| `embedding`（Conv s2d + emb 合并） | `PatchEmbed`：`Conv2d(in_ch, dim, k=patch, stride=patch)` + flatten |
+| `cls`（零初始化） + `AddPositionEmbs`（正态 std=0.02） | `cls_token` / `pos_embed` 两个 `nn.Parameter`，相加后 dropout |
+| `Encoder1DBlock`（PreNorm） | `Encoder1DBlock`：`x = x + Attn(LN(x))`；`x = x + MLP(LN(x))` |
+| `MlpBlock` | `MlpBlock`：Linear → GELU → Dropout → Linear → Dropout |
+| `MultiHeadDotProductAttention`（`broadcast_dropout=False`） | `Attention`：手写多头点积 + 注意力 dropout + 输出投影 dropout |
+| `encoder_norm` | 末尾 `nn.LayerNorm` |
+
+**分割头（本项目新增，官方无）**：丢掉 cls token → token 网格 `(B, dim, g, g)` → `Conv1×1` 降维到 `decoder_dim` → `Conv3×3-BN-GELU` 细化 → 双线性上采样到 128×128 → `Conv1×1` 输出 1 通道。
+
+- 官方 ViT-Base 是 img 224 / patch 16（14×14 token）；本项目输入 128×128 且需要密集预测，默认 **patch=8**（16×16 = 256 token）。其余超参对齐官方 **ViT-S_16** 配置：`dim=384 / depth=12 / heads=6 / dropout=0.0 / attn_dropout=0.0`（官方 ViT-S_16 的 `dropout_rate` 与 `attention_dropout_rate` 均为 0.0，0.1 只出现在官方 testing 调试配置里），可在 YAML 覆写
+- 参数量约 **~22.3M**
+
+## Swin Transformer（`swin.py`）
+
+论文 Swin Transformer: Hierarchical Vision Transformer using Shifted Windows（Liu et al., ICCV 2021, arXiv:2103.14030），移植自官方 PyTorch 实现 [microsoft/Swin-Transformer](https://github.com/microsoft/Swin-Transformer)。
+
+**逐一对齐官方的模块**：`PatchEmbed`、`PatchMerging`、`WindowAttention`（相对位置偏置表 + `relative_position_index` + shift mask）、`SwinTransformerBlock`（W-MSA / SW-MSA 交替、`torch.roll` 循环位移）、`BasicLayer`、以及 `_init_weights`（`nn.Linear` 用 `trunc_normal_(std=.02)`，`nn.LayerNorm` 置 1/0）。官方依赖 timm 的 `DropPath` / `to_2tuple` / `trunc_normal_`，已在本文件内自行实现，**不引入 timm 依赖**。
+
+| Stage | patch (k,s) | dim | heads | depth | 分辨率 |
+| ----- | ----------- | --- | ----- | ----- | ------ |
+| 1 | (4,4) | 96 | 3 | 2 | 32×32 |
+| 2 | PatchMerging | 192 | 6 | 2 | 16×16 |
+| 3 | PatchMerging | 384 | 12 | 6 | 8×8 |
+| 4 | PatchMerging | 768 | 24 | 2 | 4×4 |
+
+**与官方的三处差异**：
+
+1. **窗口补齐**：官方 `BasicLayer.forward` 不做 padding，要求 H/W 能被 7 整除；本项目 stage 分辨率为 32/16/8/4，前三个都不满足，故每个 `BasicLayer` 内部先补到窗口整数倍、跑完再裁掉（注意力 mask 也按补齐后的分辨率计算）。最后一个 stage 因 `min(H,W) <= window` 自动关闭 shift，与官方对 224 输入第 4 stage 的行为一致
+2. **解码器**：官方分割版是 UperNet；此处换成轻量解码器——各 stage 输出先过 `LayerNorm`（官方只在最后一个 stage 后加），再 `Conv1×1` 统一到 `decoder_dim`、按 2^i 上采样到 32×32、concat 后 `Conv1×1` 输出并双线性上采样回 128×128
+3. `BasicLayer` 拆成 `forward_features()`（只跑 Transformer 块）与 `forward()`（再下采样），以便解码器取到下采样前的多尺度特征
+
+参数量约 **~28.2M**（Swin-T 量级）。
+
+## 九模型对比
 
 | 模型 | 参数量 | 编码器 | 解码器 | 跳跃连接 | 特点 |
 |---|---|---|---|---|---|
 | FCN | ~15M | VGG16 5-block | 双线性上采样 ×3 | add (FCN-8s) | 最简基线，无 concat |
-| U-Net | ~31M | 5-stage conv | nearest 上采样 + conv | concat | 经典架构，参数最多 |
-| AttU-Net | ~34M | 同 U-Net | 同 U-Net | concat + 注意力门 | 在跳跃上加门控，抑制无关区域 |
+| U-Net | ~31M | 5-stage conv | nearest 上采样 + conv | concat | 经典架构，参数较多 |
+| AttU-Net | ~34.9M | 同 U-Net | 同 U-Net | concat + 注意力门 | 在跳跃上加门控，抑制无关区域 |
 | SegFormer | ~3-4M | MiT 4-stage Transformer | MLP 1×1 conv | 无编码器-解码器跳跃 | 最轻量，全局注意力 |
 | TransUNet | ~10-13M | ResNet 3-stage + ViT 瓶颈 | U-Net concat 解码 | concat（绕过 ViT） | CNN 局部 + Transformer 全局 |
+| ConvLSTM | ~42.4M | 4-stage ConvLSTM | nearest 上采样 + conv | concat | 门控卷积编码，可扩展为多期序列输入 |
+| cGAN（pix2pix 生成器） | ~41.8M | Conv4×4 s2 + LeakyReLU | ConvTranspose4×4 + ReLU | concat（逐级） | 官方 pix2pix 生成器，判别器未启用 |
+| ViT | ~22.3M | PatchEmbed + 12×Transformer | 3×3 细化 + 双线性上采样 | 无 | 全局自注意力，patch=8，超参对齐官方 ViT-S_16 |
+| Swin | ~28.2M | 4-stage 窗口注意力 | 多尺度 1×1 融合 + 上采样 | 无（stage 间 PatchMerging） | 窗口注意力，复杂度对分辨率线性 |
 
 ## 训练超参数
 
@@ -248,7 +343,7 @@ CNN-Transformer 混合模型：ResNet 风格编码器提取多尺度特征 → V
 
 ### 优化器
 
-| 设置 | 默认（attunet/unet/fcn/transunet） | segformer |
+| 设置 | 默认（attunet/unet/fcn/transunet/convlstm/cgan） | segformer / vit / swin |
 |---|---|---|
 | 优化器 | Adam | AdamW |
 | 学习率 | 1e-4 | 5e-5 |
@@ -300,3 +395,6 @@ CNN-Transformer 混合模型：ResNet 风格编码器提取多尺度特征 → V
 - `unet.py` 中定义了 `R2U_Net`、`R2AttU_Net`、`NestedUNet`、`Unet_dict` 但未在 `__init__.py` 中暴露，属于未启用的实验代码
 - SegFormer 代码默认 `ff_expansion=(8,8,4,4)` 和 `decoder_dim=256`，但 YAML 覆写为 `[4,4,4,4]` 和 `128`——如果直接 `Segformer(in_ch=10, num_classes=1)` 不传 config，得到的是更大的模型
 - TransUNet 的解码器通道计算硬编码假设 `out_channels=32`，改为其他值可能导致维度不匹配
+- `cgan.py` 只含 pix2pix 生成器，未实现判别器与对抗损失；`utils/training_utils.py` 的 `ORIGINAL_LOSS_MAP` 中 `convlstm` / `cgan` 仍回退到 `bce_dice`（cgan 的原始对抗损失需要双网络训练循环；convlstm 原论文是回归任务，没有对应的分割损失）。`vit` 映射为 `bce`（官方未加权 softmax CE 的 C=2 等价形式）；`swin` 映射为 `bce_ls`（官方默认走 mixup 软标签 CE，此处对齐其关闭 mixup 时的 `LabelSmoothingCrossEntropy(0.1)` 分支，mixup/cutmix 未引入）
+- `vit.py` / `swin.py` 的默认骨干超参已对齐官方（ViT 对齐 `ViT-S_16`：dim=384/depth=12/heads=6/dropout=0.0；Swin 对齐 `swin_tiny_patch4_window7` 的全部默认值），但输入通道数与尺寸（10 通道 128×128 vs 官方 3 通道 224×224）以及分割头/解码器为本项目新增，与官方分类模型不可直接对齐参数量；官方均带 ImageNet 预训练权重，本项目的这些模型是从零训练
+- `convlstm.py` 的 `ConvLSTM_Seg` 编解码网络为本项目新增（上游只有序列层）；本项目样本为单期，故默认 T=1，多期序列输入需要 dataloader 侧提供 `(B,T,C,H,W)`

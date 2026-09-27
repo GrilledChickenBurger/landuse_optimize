@@ -17,7 +17,7 @@ data:
   only_changed: false # 是否仅使用有变化的样本
 
 training:
-  model_name: "attunet" # attunet, unet, fcn, segformer, transunet
+  model_name: "unet" # attunet, unet, fcn, segformer, transunet, convlstm, cgan, vit, swin
   save_frequency: 20 # 每n个epoch保存一次模型参数
   print_frequency: 50 # 每n个batch打印一次损失
   visualize_frequency: 200 # 每n个batch可视化一次输出
@@ -45,6 +45,23 @@ optimizer: # 优化器配置
     amsgrad: false
     epsilon: 0.00000001
     gradient_clip: 1.0
+  # Transformer 类模型沿用 segformer 的 AdamW 设置 (Adam + 1e-4 对 ViT/Swin 偏大)
+  vit:
+    name: "adamw"
+    learning_rate: 0.00005
+    weight_decay: 0.0001
+    beta_1: 0.9
+    amsgrad: false
+    epsilon: 0.00000001
+    gradient_clip: 1.0
+  swin:
+    name: "adamw"
+    learning_rate: 0.00005
+    weight_decay: 0.0001
+    beta_1: 0.9
+    amsgrad: false
+    epsilon: 0.00000001
+    gradient_clip: 1.0
 
 validation:
   split: "val" # train|valid, 训练集或验证集
@@ -63,3 +80,42 @@ model:
 
   transunet:
     img_size: 128
+
+  # ConvLSTM (Shi et al., NeurIPS 2015); 本项目样本为单期, 序列长度=1
+  convlstm:
+    filters: [64, 128, 256, 512] # 4 级 ConvLSTM 隐状态通道数
+    kernel_size: 3
+    num_layers: 1 # 每级内部堆叠的 ConvLSTM 层数
+    bias: true
+
+  # 条件 GAN (pix2pix, Isola et al., CVPR 2017) 的 U-Net 生成器
+  cgan:
+    num_downs: 7 # 128 / 2^7 = 1, 瓶颈 1x1
+    ngf: 64
+    norm: "batch" # batch | instance | none (官方 define_G 默认 batch)
+    use_dropout: false
+    output_activation: null # null -> raw logits; "tanh" -> 官方 pix2pix 输出
+
+  # Vision Transformer (Dosovitskiy et al., ICLR 2021); 默认 ViT-Small 量级
+  vit:
+    img_size: 128
+    patch_size: 8 # 128/8 = 16 -> 16x16 = 256 个 token
+    dim: 384
+    depth: 12
+    heads: 6
+    mlp_ratio: 4.0
+    dropout: 0.0
+    attn_dropout: 0.0
+    decoder_dim: 256
+
+  # Swin Transformer (Liu et al., ICCV 2021); 默认 Swin-T 量级
+  swin:
+    img_size: 128
+    patch_size: 4
+    embed_dim: 96
+    depths: [2, 2, 6, 2]
+    num_heads: [3, 6, 12, 24]
+    window_size: 7
+    mlp_ratio: 4.0
+    drop_path_rate: 0.1
+    decoder_dim: 256
