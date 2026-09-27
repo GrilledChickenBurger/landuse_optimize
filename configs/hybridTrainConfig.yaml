@@ -5,9 +5,13 @@
 device:
   use_gpu: true
 
+# 训练机档位: "local"(本机) | "server"(4090服务器)
+# 与下方 data.batch_size_overrides / optimizer 两个分支联动, 换机器只改这一行.
+profile: "server"
+
 # 混合训练集专属配置
 hybrid:
-  model_list: ["attunet", "segformer", "transunet"] # 依次训练的模型
+  model_list: ["vit", "swin", "attunet", "segformer", "transunet"] # 依次训练的模型
   # 推导链: 由下面 4 个参数算出数据增强配额, 再以增强后变化样本数为基准算未变化样本数。
   #   raw_1015 = round(r1 × a), raw_1520 = round(r2 × b)        (a/b 为 train+val 变化池容量)
   #   Q = round(N × r_cu / (1 + r_cu))                          (目标增强后变化总数)
@@ -42,11 +46,23 @@ data:
   factor_list: ["DEM", "DL", "GDP", "RK"]
   shuffle: true
   normalize: true
-  batch_size: 4 # 默认批次大小 (attunet)
-  batch_size_overrides: # 按模型覆写 (参考 optimizer.default + 分模型覆写模式)
-    unet: 8
-    segformer: 8
-    transunet: 1 # transunet 最大, 4GB 显存限制下保持 1
+  batch_size: 4 # 默认批次大小 (未被 batch_size_overrides 覆写时)
+  # 按「机器档位 × 模型」的批大小, 与顶层 profile 联动
+  batch_size_overrides:
+    local: # 本机
+      unet: 4 # 未实测, 取默认
+      attunet: 4
+      segformer: 8
+      transunet: 1
+      vit: 4
+      swin: 4
+    server: # 4090 服务器
+      unet: 8
+      attunet: 16
+      segformer: 32
+      transunet: 8
+      vit: 32
+      swin: 16
   only_changed: false # 供训练期验证集 TrainingDataset 构造使用
 
 training:
@@ -65,44 +81,39 @@ training:
   print_frequency: 50
   visualize_frequency: 200
   num_epochs: 100
+  warmup_epochs: 3 # 前n个epoch线性warmup (学习率由 base/warmup_steps 升至 base)
+  lr_scheduler: # warmup 结束后按总步数 cosine 衰减
+    name: "cosine" # cosine | none(仅 warmup, 之后保持峰值)
+    min_lr: 0.000001 # cosine 末端学习率下限
   is_tensorboard: true
   log_frequency: 4
   log_dir: "logs\\{model_name}\\{run_timestamp}"
   checkpoint_dir: "checkpoints\\{model_name}\\{run_timestamp}"
 
+# 优化器配置: 按「机器档位 (local/server) × 模型」, 与顶层 profile 联动.
+# 数值依据 0914 本机 tensorboard 判断 + 服务器档按 √(bs_server/bs_local) 缩放:
+#   attunet   本机 Dice 快速收敛且平稳        → 保持 1e-4         (bs 4→16,  ×2)
+#   unet      本机加权CE噪声大、缓降未收敛     → 降 5e-5           (bs 4→8,   ×1.41)
+#   segformer 本机 BCE 快速收敛至~0 且稳      → 保持 5e-5         (bs 8→32,  ×2)
+#   transunet 本机 BCE+Dice 高位震荡后段才降   → 降 5e-5 + AdamW   (bs 1→8,   ×2.83)
+#   vit/swin  截图未含, 沿用 Transformer 默认 → 保持 5e-5         (bs 4→32/16)
 optimizer:
-  default:
-    name: "adam"
-    learning_rate: 0.0001
-    weight_decay: 0.00001
-    beta_1: 0.9
-    amsgrad: false
-    epsilon: 0.00000001
-    gradient_clip: 1.0
-  segformer:
-    name: "adamw"
-    learning_rate: 0.00005
-    weight_decay: 0.0001
-    beta_1: 0.9
-    amsgrad: false
-    epsilon: 0.00000001
-    gradient_clip: 1.0
-  vit:
-    name: "adamw"
-    learning_rate: 0.00005
-    weight_decay: 0.0001
-    beta_1: 0.9
-    amsgrad: false
-    epsilon: 0.00000001
-    gradient_clip: 1.0
-  swin:
-    name: "adamw"
-    learning_rate: 0.00005
-    weight_decay: 0.0001
-    beta_1: 0.9
-    amsgrad: false
-    epsilon: 0.00000001
-    gradient_clip: 1.0
+  local:
+    default:   {name: "adam",  learning_rate: 0.0001,  weight_decay: 0.00001, beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+    attunet:   {name: "adam",  learning_rate: 0.0001,  weight_decay: 0.00001, beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+    unet:      {name: "adam",  learning_rate: 0.00005, weight_decay: 0.00001, beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+    segformer: {name: "adamw", learning_rate: 0.00005, weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+    transunet: {name: "adamw", learning_rate: 0.00005, weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+    vit:       {name: "adamw", learning_rate: 0.00005, weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+    swin:      {name: "adamw", learning_rate: 0.00005, weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+  server:
+    default:   {name: "adam",  learning_rate: 0.0002,  weight_decay: 0.00001, beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+    attunet:   {name: "adam",  learning_rate: 0.0002,  weight_decay: 0.00001, beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+    unet:      {name: "adam",  learning_rate: 0.00007, weight_decay: 0.00001, beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+    segformer: {name: "adamw", learning_rate: 0.0001,  weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+    transunet: {name: "adamw", learning_rate: 0.00014, weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+    vit:       {name: "adamw", learning_rate: 0.00014, weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+    swin:      {name: "adamw", learning_rate: 0.0001,  weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
 
 validation:
   split: "val"

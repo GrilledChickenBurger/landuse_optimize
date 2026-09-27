@@ -3,6 +3,7 @@
 # 验证集使用 val split 的 15-20 时间对; 复用 train.py 的 process_batch / visualize_outputs
 # 与 training_utils 的优化器/损失工具, 不修改 train.py.
 import os
+import math
 import time
 import json
 import shutil
@@ -20,7 +21,7 @@ from datasets.base_dataloader import get_dataset
 from datasets.hybrid_dataloader import HybridDataset
 from utils.tools import ensure_folder, get_yaml
 from utils.training_utils import (
-    get_optimizer, adjust_learning_rate, ExpoAverageMeter, cal_loss, MetricsMeter,
+    get_optimizer, ExpoAverageMeter, cal_loss, MetricsMeter,
     get_original_loss_fn,
 )
 from pipelines.train import process_batch, visualize_outputs
@@ -75,9 +76,10 @@ def _write_model_report(result: dict, model_type: str, checkpoint_dir: str,
     best_model_path = os.path.join(checkpoint_dir, "best_model.pth")
 
     # 训练配置 (只保留可 JSON 序列化的基础类型)
-    optimizer_config = getattr(config.optimizer, model_type, config.optimizer.default)
+    optimizer_config = _resolve_optimizer_config(config, model_type)
     training_config = {
         'model': model_type,
+        'profile': getattr(config, 'profile', 'server'),
         'factor_list': config.data.factor_list,
         'batch_size': _model_batch_size(config, model_type),
         'num_epochs': config.training.num_epochs,
@@ -161,11 +163,42 @@ def _write_model_report(result: dict, model_type: str, checkpoint_dir: str,
 
 
 def _model_batch_size(config, model_type: str) -> int:
-    """按模型解析训练 batch_size: 优先取 data.batch_size_overrides.{model}, 否则用默认 data.batch_size."""
+    """按「机器档位 × 模型」解析训练 batch_size.
+
+    先取 data.batch_size_overrides.{profile}.{model}, 缺失时回退默认 data.batch_size.
+    profile 由顶层 config.profile 指定 (local / server).
+    """
+    profile = getattr(config, 'profile', 'server')
     overrides = getattr(config.data, 'batch_size_overrides', None)
-    if overrides is not None:
-        return getattr(overrides, model_type, config.data.batch_size)
+    group = getattr(overrides, profile, None) if overrides is not None else None
+    if group is not None:
+        return getattr(group, model_type, config.data.batch_size)
     return config.data.batch_size
+
+
+def _resolve_optimizer_config(config, model_type: str):
+    """按机器档位解析优化器配置: optimizer.{profile}.{model}, 缺失时回退该档的 default."""
+    profile = getattr(config, 'profile', 'server')
+    group = getattr(config.optimizer, profile)
+    return getattr(group, model_type, group.default)
+
+
+def _apply_lr(optimizer, base_lrs, step, warmup_steps, decay_steps, min_lr, use_cosine):
+    """按全局步 step 设置学习率: 线性 warmup → cosine 衰减到 min_lr.
+
+    warmup 窗口内 lr 由 base/warmup_steps 线性升至 base; 窗口后若启用 cosine
+    则按剩余步数余弦衰减到 min_lr, 否则保持峰值 lr.
+    """
+    if warmup_steps > 0 and step < warmup_steps:
+        factor = (step + 1) / warmup_steps
+        lrs = [b * factor for b in base_lrs]
+    elif use_cosine:
+        p = min(max((step - warmup_steps) / decay_steps, 0.0), 1.0)
+        lrs = [min_lr + (b - min_lr) * 0.5 * (1.0 + math.cos(math.pi * p)) for b in base_lrs]
+    else:
+        lrs = base_lrs
+    for group, lr in zip(optimizer.param_groups, lrs):
+        group['lr'] = lr
 
 
 def _train_single_model(config, model_type: str, device: torch.device, run_timestamp: str,
@@ -174,7 +207,7 @@ def _train_single_model(config, model_type: str, device: torch.device, run_times
     data_config = config.data
     train_config = config.training
     hybrid_config = config.hybrid
-    optimizer_config = getattr(config.optimizer, model_type, config.optimizer.default)
+    optimizer_config = _resolve_optimizer_config(config, model_type)
 
     print(f"\n================= 开始训练模型【{model_type}】... =================")
 
@@ -219,6 +252,20 @@ def _train_single_model(config, model_type: str, device: torch.device, run_times
         epsilon=optimizer_config.epsilon,
     )
 
+    # 2.1 学习率调度: 前 warmup_epochs 线性 warmup, 之后 cosine 衰减到 min_lr (按总步数)
+    warmup_epochs = getattr(train_config, 'warmup_epochs', 0)
+    lr_sched_cfg = getattr(train_config, 'lr_scheduler', None)
+    use_cosine = lr_sched_cfg is not None and getattr(lr_sched_cfg, 'name', 'none') == 'cosine'
+    min_lr = getattr(lr_sched_cfg, 'min_lr', 1e-6) if lr_sched_cfg is not None else 1e-6
+    # 峰值学习率取配置值(而非优化器当前值), 保证断点续训时调度进度不受影响
+    base_lrs = [optimizer_config.learning_rate] * len(optimizer.param_groups)
+    steps_per_epoch = len(train_dataloader)
+    warmup_steps = warmup_epochs * steps_per_epoch
+    total_steps = max(train_config.num_epochs * steps_per_epoch, warmup_steps + 1)
+    decay_steps = max(total_steps - warmup_steps, 1)
+    print(f"学习率调度: warmup {warmup_epochs} epoch ({warmup_steps} 步)"
+          + (f" + cosine → min_lr={min_lr} (总 {total_steps} 步)" if use_cosine else " (无 cosine)"))
+
     # 损失函数: 由 config.training.loss_type 决定 (original / focal_dice)
     loss_fn = _resolve_loss_fn(config, model_type)
     print(f"损失函数: {_loss_name(config, model_type)}")
@@ -261,10 +308,6 @@ def _train_single_model(config, model_type: str, device: torch.device, run_times
         print(f"从epoch {start_epoch}继续训练，全局步数: {tensorboard_step}")
 
     for epoch in range(start_epoch, epochs):
-        # 学习率衰减
-        if epochs_since_improvement > 0 and epochs_since_improvement % 8 == 0:
-            adjust_learning_rate(optimizer, 0.8)
-
         model.train()
         train_loss = ExpoAverageMeter()
         batch_time = ExpoAverageMeter()
@@ -279,6 +322,10 @@ def _train_single_model(config, model_type: str, device: torch.device, run_times
             except AttributeError:
                 pass
             optimizer.step()
+
+            # 学习率调度: 线性 warmup + cosine 衰减 (按全局步数)
+            _apply_lr(optimizer, base_lrs, tensorboard_step,
+                      warmup_steps, decay_steps, min_lr, use_cosine)
 
             train_loss.update(loss.item())
             batch_time.update(time.time() - start)
@@ -310,6 +357,7 @@ def _train_single_model(config, model_type: str, device: torch.device, run_times
         print(f'Epoch [{epoch+1}/{epochs}], Val Loss: {val_epoch_loss:.4f}\n')
         if writer:
             writer.add_scalar('Loss/val_epoch', val_epoch_loss, (epoch + 1) * len(train_dataloader))
+            writer.add_scalar('LR', optimizer.param_groups[0]['lr'], (epoch + 1) * len(train_dataloader))
 
         # 保存 best / checkpoint
         if val_epoch_loss < best_val_loss:
