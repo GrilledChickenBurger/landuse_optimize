@@ -25,6 +25,7 @@ results/
 .idea/
 .venv/
 .claude/
+.trae/
 
 # 临时文件
 *.tmp

@@ -7,6 +7,10 @@ File:     FCN8s.py
 Describe: Write during my study in Nanjing University of Information and Secience Technology
 Github:   https://github.com/Deeachain
 """
+# 论文: Fully Convolutional Networks for Semantic Segmentation (Long et al., 2015, arXiv:1411.4038)
+# 来源: Deeachain 的个人复现 (非官方; FCN 论文官方为 Caffe 版).
+# 差异: 论文 FCN-8s 用 VGG16 backbone + 转置卷积上采样; 本实现用双线性插值上采样 + element-wise add 跳跃.
+# 参数量: ~15.1M (in_ch=10, out_ch=1)
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

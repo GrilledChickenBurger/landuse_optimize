@@ -1,5 +1,13 @@
 # github:
 #  https://github.com/lucidrains/segformer-pytorch?tab=readme-ov-file
+# 论文: SegFormer: Simple and Efficient Design for Semantic Segmentation with Transformers (Xie et al., 2021, NeurIPS, arXiv:2105.15203)
+# 来源: lucidrains/segformer-pytorch (第三方重写, 非官方; 官方为 NVlabs/SegFormer).
+# 差异: 结构对齐官方 MiT-B0 (dims=[32,64,160,256]), 但非官方代码; trainConfig 自定义
+#       ff_expansion=[4,4,4,4]、decoder_dim=128, 偏离官方 B0 标准.
+
+# 参数量 (channels=10, num_classes=1):
+#   默认 (ff_expansion=(8,8,4,4), decoder_dim=256)     ~7.7M
+#   trainConfig (ff_expansion=(4,4,4,4), decoder_dim=128) ~6.9M
 
 from math import sqrt
 from functools import partial
