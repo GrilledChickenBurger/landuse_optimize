@@ -6,16 +6,26 @@ import numpy as np
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 from matplotlib.font_manager import FontProperties
 
 from utils.io_utils import ensure_folder
 
 
 def _resolve_font_family() -> List[str]:
-    """英文 Arial Bold + 中文黑体 SimHei，宽松回退。"""
+    """英文 Arial Bold + 中文黑体 SimHei，宽松回退。
+
+    只保留系统实际安装的字体: 否则 matplotlib 每次按 FontProperties 查找都会对缺失
+    字体逐个打印 findfont 警告(逐图逐文本刷屏, 日志暴涨), 且重复走字体扫描.
+    """
     if sys.platform == 'win32':
-        return ['Arial', 'SimHei', 'sans-serif']
-    return ['Arial', 'Noto Sans CJK SC', 'WenQuanYi Zen Hei', 'sans-serif']
+        candidates = ['Arial', 'SimHei']
+    else:
+        candidates = ['Arial', 'Noto Sans CJK SC', 'WenQuanYi Zen Hei', 'SimHei']
+    installed = {f.name for f in font_manager.fontManager.ttflist}
+    family = [name for name in candidates if name in installed]
+    family.append('sans-serif')
+    return family
 
 
 def setup_plot_fonts(base_size: float = 12) -> Dict[str, Any]:
