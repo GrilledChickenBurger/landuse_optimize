@@ -33,15 +33,20 @@ hybrid:
 # 最终评测口径 (阈值扫描阶段)
 sweep:
   eval_split: "all" # "all" = 15-20 的 train+val 全量; "val" = 仅 val split
+  # 扫描阶段推理批大小 / DataLoader 并行进程数.
+  # 留空(删除该行)则回退: batch_size 取 data.batch_size_overrides[profile] 最大值,
+  # num_workers 取 data.num_workers_overrides[profile]; 不再复用 validation.batch_size(=1).
+  batch_size: 32
+  num_workers: 4
 
 # 验证结果归档路径 (模板变量: {model_name} / {run_timestamp})
 result:
-  model_perf_dir: "results\\_model_performance\\{model_name}\\{run_timestamp}"
-  sweep_dir: "results\\_model_performance\\threshold_sweep\\{run_timestamp}"
+  model_perf_dir: "results/_model_performance/{model_name}/{run_timestamp}"
+  sweep_dir: "results/_model_performance/threshold_sweep/{run_timestamp}"
 
 # 数据配置（训练集用 HybridDataset, 训练期验证集复用 TrainingDataset）
 data:
-  root: "_data\\training_data"
+  root: "_data/training_data"
   shape: [1, 128, 128]
   factor_list: ["DEM", "DL", "GDP", "RK"]
   shuffle: true
@@ -63,6 +68,13 @@ data:
       transunet: 8
       vit: 32
       swin: 16
+  # 按「机器档位」的 DataLoader 进程数, 与顶层 profile 联动.
+  # 本机(Windows) 用 spawn: 建 worker 需把整个内存数据集序列化过去(实测 ~8.5s/DataLoader),
+  # 而本机 batch 只有 1~8、__getitem__ 仅做索引, worker 无收益 => 0(主进程加载);
+  # 服务器(Linux fork) 可零成本共享数据集, 用 4 把 collate/pin 挪出训练关键路径.
+  num_workers_overrides:
+    local: 0
+    server: 4
   only_changed: false # 供训练期验证集 TrainingDataset 构造使用
 
 training:
@@ -87,8 +99,8 @@ training:
     min_lr: 0.000001 # cosine 末端学习率下限
   is_tensorboard: true
   log_frequency: 4
-  log_dir: "logs\\{model_name}\\{run_timestamp}"
-  checkpoint_dir: "checkpoints\\{model_name}\\{run_timestamp}"
+  log_dir: "logs/{model_name}/{run_timestamp}"
+  checkpoint_dir: "checkpoints/{model_name}/{run_timestamp}"
 
 # 优化器配置: 按「机器档位 (local/server) × 模型」, 与顶层 profile 联动.
 # 数值依据 0914 本机 tensorboard 判断 + 服务器档按 √(bs_server/bs_local) 缩放:
@@ -99,21 +111,147 @@ training:
 #   vit/swin  截图未含, 沿用 Transformer 默认 → 保持 5e-5         (bs 4→32/16)
 optimizer:
   local:
-    default:   {name: "adam",  learning_rate: 0.0001,  weight_decay: 0.00001, beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
-    attunet:   {name: "adam",  learning_rate: 0.0001,  weight_decay: 0.00001, beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
-    unet:      {name: "adam",  learning_rate: 0.00005, weight_decay: 0.00001, beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
-    segformer: {name: "adamw", learning_rate: 0.00005, weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
-    transunet: {name: "adamw", learning_rate: 0.00005, weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
-    vit:       {name: "adamw", learning_rate: 0.00005, weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
-    swin:      {name: "adamw", learning_rate: 0.00005, weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+    default:
+      {
+        name: "adam",
+        learning_rate: 0.0001,
+        weight_decay: 0.00001,
+        beta_1: 0.9,
+        amsgrad: false,
+        epsilon: 0.00000001,
+        gradient_clip: 1.0,
+      }
+    attunet:
+      {
+        name: "adam",
+        learning_rate: 0.0001,
+        weight_decay: 0.00001,
+        beta_1: 0.9,
+        amsgrad: false,
+        epsilon: 0.00000001,
+        gradient_clip: 1.0,
+      }
+    unet:
+      {
+        name: "adam",
+        learning_rate: 0.00005,
+        weight_decay: 0.00001,
+        beta_1: 0.9,
+        amsgrad: false,
+        epsilon: 0.00000001,
+        gradient_clip: 1.0,
+      }
+    segformer:
+      {
+        name: "adamw",
+        learning_rate: 0.00005,
+        weight_decay: 0.0001,
+        beta_1: 0.9,
+        amsgrad: false,
+        epsilon: 0.00000001,
+        gradient_clip: 1.0,
+      }
+    transunet:
+      {
+        name: "adamw",
+        learning_rate: 0.00005,
+        weight_decay: 0.0001,
+        beta_1: 0.9,
+        amsgrad: false,
+        epsilon: 0.00000001,
+        gradient_clip: 1.0,
+      }
+    vit:
+      {
+        name: "adamw",
+        learning_rate: 0.00005,
+        weight_decay: 0.0001,
+        beta_1: 0.9,
+        amsgrad: false,
+        epsilon: 0.00000001,
+        gradient_clip: 1.0,
+      }
+    swin:
+      {
+        name: "adamw",
+        learning_rate: 0.00005,
+        weight_decay: 0.0001,
+        beta_1: 0.9,
+        amsgrad: false,
+        epsilon: 0.00000001,
+        gradient_clip: 1.0,
+      }
   server:
-    default:   {name: "adam",  learning_rate: 0.0002,  weight_decay: 0.00001, beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
-    attunet:   {name: "adam",  learning_rate: 0.0002,  weight_decay: 0.00001, beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
-    unet:      {name: "adam",  learning_rate: 0.00007, weight_decay: 0.00001, beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
-    segformer: {name: "adamw", learning_rate: 0.0001,  weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
-    transunet: {name: "adamw", learning_rate: 0.00014, weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
-    vit:       {name: "adamw", learning_rate: 0.00014, weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
-    swin:      {name: "adamw", learning_rate: 0.0001,  weight_decay: 0.0001,  beta_1: 0.9, amsgrad: false, epsilon: 0.00000001, gradient_clip: 1.0}
+    default:
+      {
+        name: "adam",
+        learning_rate: 0.0002,
+        weight_decay: 0.00001,
+        beta_1: 0.9,
+        amsgrad: false,
+        epsilon: 0.00000001,
+        gradient_clip: 1.0,
+      }
+    attunet:
+      {
+        name: "adam",
+        learning_rate: 0.0002,
+        weight_decay: 0.00001,
+        beta_1: 0.9,
+        amsgrad: false,
+        epsilon: 0.00000001,
+        gradient_clip: 1.0,
+      }
+    unet:
+      {
+        name: "adam",
+        learning_rate: 0.00007,
+        weight_decay: 0.00001,
+        beta_1: 0.9,
+        amsgrad: false,
+        epsilon: 0.00000001,
+        gradient_clip: 1.0,
+      }
+    segformer:
+      {
+        name: "adamw",
+        learning_rate: 0.0001,
+        weight_decay: 0.0001,
+        beta_1: 0.9,
+        amsgrad: false,
+        epsilon: 0.00000001,
+        gradient_clip: 1.0,
+      }
+    transunet:
+      {
+        name: "adamw",
+        learning_rate: 0.00014,
+        weight_decay: 0.0001,
+        beta_1: 0.9,
+        amsgrad: false,
+        epsilon: 0.00000001,
+        gradient_clip: 1.0,
+      }
+    vit:
+      {
+        name: "adamw",
+        learning_rate: 0.00014,
+        weight_decay: 0.0001,
+        beta_1: 0.9,
+        amsgrad: false,
+        epsilon: 0.00000001,
+        gradient_clip: 1.0,
+      }
+    swin:
+      {
+        name: "adamw",
+        learning_rate: 0.0001,
+        weight_decay: 0.0001,
+        beta_1: 0.9,
+        amsgrad: false,
+        epsilon: 0.00000001,
+        gradient_clip: 1.0,
+      }
 
 validation:
   split: "val"
