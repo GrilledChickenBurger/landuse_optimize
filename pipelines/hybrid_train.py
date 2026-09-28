@@ -176,6 +176,30 @@ def _model_batch_size(config, model_type: str) -> int:
     return config.data.batch_size
 
 
+def _resolve_num_workers(config) -> int:
+    """按机器档位解析 DataLoader 进程数: data.num_workers_overrides.{profile}.
+
+    本机(Windows) 走 spawn, 建 worker 需把整个内存数据集序列化过去(实测 ~8.5s/DataLoader),
+    而本机 batch 只有 1~8、__getitem__ 仅做索引, worker 无收益, 故配置里给 0;
+    服务器(Linux fork) 零成本共享数据集, 给 4 把 collate/pin 挪出训练关键路径.
+    未配置时回退: 本机 0, 其它(Linux) 4.
+    """
+    default = 0 if os.name == 'nt' else 4
+    overrides = getattr(config.data, 'num_workers_overrides', None)
+    if overrides is None:
+        return default
+    return int(getattr(overrides, getattr(config, 'profile', 'server'), default))
+
+
+def _init_worker(worker_id: int):
+    """DataLoader 子进程初始化: 把 torch 线程压到 1.
+
+    主进程线程数已按 TORCH_NUM_THREADS 限制, 但 fork 出的 worker 会各自继承一份;
+    若 worker 仍开多线程, 多进程 × 多线程会远超容器 CPU 配额, 引发 OpenMP 自旋抢核.
+    """
+    torch.set_num_threads(1)
+
+
 def _resolve_optimizer_config(config, model_type: str):
     """按机器档位解析优化器配置: optimizer.{profile}.{model}, 缺失时回退该档的 default."""
     profile = getattr(config, 'profile', 'server')
@@ -223,16 +247,26 @@ def _train_single_model(config, model_type: str, device: torch.device, run_times
         normalize=data_config.normalize,
         seed=hybrid_config.seed,
     )
+    # num_workers/pin_memory 仅并行化数据搬运, 不改变 batch 内容与顺序
+    # (数据集在构造期即固定、__getitem__ 只做索引, 完全确定性)
+    num_workers = _resolve_num_workers(config)
+    dl_extra = dict(num_workers=num_workers,
+                    pin_memory=device.type == "cuda",
+                    persistent_workers=num_workers > 0,
+                    worker_init_fn=_init_worker)
+    print(f"DataLoader: num_workers={num_workers}, pin_memory={dl_extra['pin_memory']}")
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=_model_batch_size(config, model_type),
         shuffle=data_config.shuffle,
+        **dl_extra,
     )
     val_dataset = _build_val_dataset(config)
     val_dataloader = DataLoader(
         val_dataset,
         batch_size=config.validation.batch_size,
         shuffle=config.validation.shuffle,
+        **dl_extra,
     )
 
     # 2. 模型 + 优化器

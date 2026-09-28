@@ -39,6 +39,11 @@ from utils.dataset_utils import get_year_data, apply_norm
 from .training_dataloader import create_training_data_pack, apply_transform
 
 
+# 进程内缓存: 多个模型会各构造一次 HybridDataset, 而 6 份年份数据完全相同(加载+归一化成本高).
+# 只缓存主副本, 每次调用返回副本, 保证与"每次重新加载"语义完全一致(调用方可自由原地修改).
+_YEAR_DATA_CACHE = {}
+
+
 def _load_year_data(root: str, split: str, year: str, condition_list: List[str],
                     shape: List[int], normalize: bool) -> np.ndarray:
     """加载指定 split 下指定年份的 [因子..., LU] 数据, 可选归一化.
@@ -46,6 +51,12 @@ def _load_year_data(root: str, split: str, year: str, condition_list: List[str],
     返回 shape 为 (num_samples, len(condition_list)+1, H, W) 的 numpy 数组,
     末尾一列为 LU 通道, 与 training_dataloader.load_training_data 内部保持一致.
     """
+    key = (os.path.abspath(root), split, year,
+           tuple(condition_list), tuple(shape), bool(normalize))
+    cached = _YEAR_DATA_CACHE.get(key)
+    if cached is not None:
+        return cached.copy()
+
     cond_list = condition_list[:] + ["LU"]
     xf = get_year_data(os.path.join(root, split, f"valid_{year}"), cond_list, shape)
     if normalize:
@@ -54,7 +65,8 @@ def _load_year_data(root: str, split: str, year: str, condition_list: List[str],
             if factor_name in params:
                 log = factor_name in ALL_LOG_FACTORS
                 xf[:, j] = apply_norm(xf[:, j], factor_name, params, log=log)
-    return xf
+    _YEAR_DATA_CACHE[key] = xf
+    return xf.copy()
 
 
 def _get_sample_indices(root: str, split: str, year: str, condition_list: List[str]) -> List[str]:

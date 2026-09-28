@@ -47,6 +47,12 @@ def remove_lines(area: np.ndarray, threshold: int = None) -> np.ndarray:
     return new_area
 
 
+# remove_lines_forbatch 的逐样本结果缓存: GT 是静态的, 同一张 0/1 图每 epoch 都会重算,
+# 按 (threshold, dtype, 形状, 内容) 缓存可跳过重复的连通域标记; 输出与原实现逐位一致.
+_REMOVE_LINES_CACHE = {}
+_REMOVE_LINES_CACHE_MAX = 8192
+
+
 def remove_lines_forbatch(area: torch.Tensor, threshold: int = None) -> torch.Tensor:
     """
     批量版小斑块移除（训练前处理）
@@ -63,11 +69,21 @@ def remove_lines_forbatch(area: torch.Tensor, threshold: int = None) -> torch.Te
     # 预计算结构体，避免循环中重复创建
     structure = generate_binary_structure(2, 1)
     for i in range(batch_size):
-        labeled_array, num_features = label(new_area[i][0], structure=structure)
-        for j in range(1, num_features + 1):
-            s = np.sum(labeled_array == j)
-            if s < threshold:
-                new_area[i][0][labeled_array == j] = 0
+        single = np.ascontiguousarray(new_area[i][0])
+        # dtype 必须进 key: 同形状不同 dtype 的数组可能字节内容相同, 否则会串类型
+        key = (threshold, single.dtype.str, single.shape, single.tobytes())
+        cached = _REMOVE_LINES_CACHE.get(key)
+        if cached is None:
+            arr = single.copy()
+            labeled_array, num_features = label(arr, structure=structure)
+            for j in range(1, num_features + 1):
+                if np.sum(labeled_array == j) < threshold:
+                    arr[labeled_array == j] = 0
+            cached = arr
+            if len(_REMOVE_LINES_CACHE) >= _REMOVE_LINES_CACHE_MAX:
+                _REMOVE_LINES_CACHE.clear()
+            _REMOVE_LINES_CACHE[key] = cached
+        new_area[i][0] = cached
     assert area.shape == new_area.shape
     return torch.from_numpy(new_area)
 

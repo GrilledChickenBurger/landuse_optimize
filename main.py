@@ -1,5 +1,26 @@
 import os
+import sys
+
+# 容器里 nproc 常远大于实际 CPU 配额(如 128 vs 16), torch/numpy 默认按 nproc 开线程会造成
+# OpenMP 忙等自旋抢满配额并饿住 GPU; 该现象只出现在 Linux 容器, 本机核数=配额则无需封顶.
+# 必须在导入 numpy/torch 之前设置环境变量; setdefault 保证已显式设置的值优先.
+_IS_LINUX = sys.platform.startswith('linux')
+if _IS_LINUX:
+    for _thread_env in ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
+                        "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ.setdefault(_thread_env, "1")
+
 import random
+
+import torch
+
+# 主进程线程数: Linux 容器取小值(避免与 DataLoader worker 抢配额, worker 内另行压到 1);
+# 本机核数即配额, 直接用满. 两种情况都可用 TORCH_NUM_THREADS 覆盖.
+_DEFAULT_THREADS = 4 if _IS_LINUX else (os.cpu_count() or 4)
+torch.set_num_threads(int(os.environ.get("TORCH_NUM_THREADS", _DEFAULT_THREADS)))
+# 输入尺寸固定(128x128), 让 cudnn 自动挑选最快卷积算法
+torch.backends.cudnn.benchmark = True
+
 from pipelines.run_runner import pipeline
 from pipelines.experiment import experiment_pipeline
 from pipelines.train import training_pipeline,valid_pipeline, get_changed_indices

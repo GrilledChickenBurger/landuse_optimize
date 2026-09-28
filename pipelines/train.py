@@ -409,14 +409,18 @@ def process_batch(data_pack: List[torch.Tensor], model: nn.Module, device: torch
     """
     # data_pack格式: [srcFactors, srcLU, diff, idx_label, changed_flag]
     # 1. src Factors (batch_size, factor_num, 128, 128)
-    factors_src = torch.tensor(data_pack[0], dtype=torch.float32).to(device)
+    # as_tensor: 已是 float32 张量时零拷贝返回自身(dtype/设备一致), 配合 pin_memory 可异步上卡
+    factors_src = torch.as_tensor(data_pack[0], dtype=torch.float32).to(device, non_blocking=True)
     # 2. src LU (batch_size, 6, 128, 128)
-    lu_src = torch.tensor(data_pack[1], dtype=torch.float32).to(device)
+    lu_src = torch.as_tensor(data_pack[1], dtype=torch.float32).to(device, non_blocking=True)
     # 3. diff (batch_size, 1, 128, 128)
-    diff = torch.tensor(data_pack[2], dtype=torch.float32).to(device)
-    
+    # GT 清洗(remove_lines_forbatch)直接在 CPU 上完成再一次性上卡, 省掉原先的 GPU→CPU→GPU 往返;
+    # 清洗结果与原实现逐位一致.
+    diff = remove_lines_forbatch(
+        torch.as_tensor(data_pack[2], dtype=torch.float32)
+    ).to(device, non_blocking=True)
+
     inputs = torch.cat([factors_src, lu_src], dim=1)
-    diff = remove_lines_forbatch(diff.cpu()).to(device)
 
     outputs = model(inputs)
     if loss_fn is not None:
