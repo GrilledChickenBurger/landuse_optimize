@@ -470,15 +470,20 @@ class MetricsMeter(object):
     """
     累积预测和真实标签张量，并在每次更新时计算总体指标
     """
-    def __init__(self, device='cpu', threshold: float = 0.5):
+    def __init__(self, device='cpu', threshold: float = 0.5, accumulate_counts: bool = False):
         """
         Parameters:
         -----------
             device: str, 计算设备, 默认'cpu'
             threshold: float, sigmoid 输出二值化阈值, 默认0.5
+            accumulate_counts: bool, 是否只累加混淆矩阵计数而不缓存整图.
+                True 时内存占用 O(1) 且避免逐 batch torch.cat 的 O(n^2) 拷贝,
+                与整图累积的指标在数学上完全等价(像素计数为整数, 可交换结合).
+                默认 False 保持原有行为不变(向下兼容).
         """
         self.device = device
         self.threshold = threshold
+        self.accumulate_counts = accumulate_counts
         self.reset()
 
     def reset(self):
@@ -487,6 +492,11 @@ class MetricsMeter(object):
         self.all_target = None
         self.count = 0
         self.current_metrics = {}
+        # 计数累加路径的混淆矩阵标量
+        self._tp = 0.0
+        self._fp = 0.0
+        self._tn = 0.0
+        self._fn = 0.0
 
     def update(self, pred: torch.Tensor, target: torch.Tensor):
         """
@@ -499,7 +509,18 @@ class MetricsMeter(object):
         # 确保张量在正确的设备上
         pred = pred.to(self.device)
         target = target.to(self.device)
-        
+
+        if self.accumulate_counts:
+            # 计数累加路径: 只累加混淆矩阵标量, 不缓存整图
+            pred_binary = (pred > self.threshold).float()
+            self._tp += ((pred_binary == 1) & (target == 1)).float().sum().item()
+            self._fp += ((pred_binary == 1) & (target == 0)).float().sum().item()
+            self._tn += ((pred_binary == 0) & (target == 0)).float().sum().item()
+            self._fn += ((pred_binary == 0) & (target == 1)).float().sum().item()
+            self.count += pred.size(0)
+            self._calculate_metrics()
+            return self.current_metrics
+
         # 累积张量
         if self.all_pred is None:
             self.all_pred = pred
@@ -507,28 +528,29 @@ class MetricsMeter(object):
         else:
             self.all_pred = torch.cat([self.all_pred, pred], dim=0)
             self.all_target = torch.cat([self.all_target, target], dim=0)
-        
+
         self.count += pred.size(0)
-        
+
         # 计算当前总体指标
         self._calculate_metrics()
-        
+
         return self.current_metrics
 
     def _calculate_metrics(self):
         """计算所有累积数据的总体指标"""
-        if self.all_pred is None:
-            return
-            
-        # 将预测值转换为0/1（假设是二分类），阈值可配置
-        pred_binary = (self.all_pred > self.threshold).float()
-        target_binary = self.all_target
-        
-        # 计算混淆矩阵分量
-        TP = ((pred_binary == 1) & (target_binary == 1)).float().sum().item()
-        FP = ((pred_binary == 1) & (target_binary == 0)).float().sum().item()
-        TN = ((pred_binary == 0) & (target_binary == 0)).float().sum().item()
-        FN = ((pred_binary == 0) & (target_binary == 1)).float().sum().item()
+        if self.accumulate_counts:
+            TP, FP, TN, FN = self._tp, self._fp, self._tn, self._fn
+        else:
+            if self.all_pred is None:
+                return
+            # 将预测值转换为0/1（假设是二分类），阈值可配置
+            pred_binary = (self.all_pred > self.threshold).float()
+            target_binary = self.all_target
+            # 计算混淆矩阵分量
+            TP = ((pred_binary == 1) & (target_binary == 1)).float().sum().item()
+            FP = ((pred_binary == 1) & (target_binary == 0)).float().sum().item()
+            TN = ((pred_binary == 0) & (target_binary == 0)).float().sum().item()
+            FN = ((pred_binary == 0) & (target_binary == 1)).float().sum().item()
         
         total_pixels = TP + FP + TN + FN
         

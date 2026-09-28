@@ -1,12 +1,13 @@
 # step2.5: 多阈值 × 多模型 变化检测指标扫描
-# 对每个 sigmoid 二值化阈值, 依次评估四个预训练模型在评测集上的表现
+# 对每个 sigmoid 二值化阈值, 依次评估各预训练模型在评测集上的表现
 # 评测集口径由 config.sweep.eval_split 决定, 默认 "all" = 15-20 的 train+val 全量
-# 设计: 数据只加载一次, 每个模型只推理一次(sigmoid 概率图缓存), 阈值仅做重二值化
+# 设计: 数据只加载一次, 每个模型只推理一次; 推理时对每个阈值即时累积混淆矩阵计数,
+#       不再缓存概率图, 与「先存概率图再重二值化」数学上逐位等价.
 import os
 import json
 import argparse
 from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import torch
 import torch.nn.functional as F
@@ -47,11 +48,30 @@ def _build_dataloader(config):
     data_config.only_changed = False
     data_config.transform = False
     data_config.pack = getattr(config.validation, "pack", getattr(config.data, "pack", [[15, 20]]))
-    batch_size = getattr(config.validation, "batch_size", config.data.batch_size)
 
+    # sweep 推理批大小: 优先 sweep.batch_size, 其次 data.batch_size_overrides[profile] 的 default/最大值,
+    # 不再复用 validation.batch_size(=1), 否则 1815 batch/模型 × 5 模型串行单图推理极慢.
     sweep_config = getattr(config, "sweep", None)
+    batch_size = getattr(sweep_config, "batch_size", None) if sweep_config is not None else None
+    if batch_size is None:
+        overrides = getattr(config.data, "batch_size_overrides", None)
+        profile = getattr(config, "profile", "local")
+        prof = getattr(overrides, profile, None) if overrides is not None else None
+        if prof is not None:
+            vals = [v for k, v in vars(prof).items() if isinstance(v, int)]
+            batch_size = max(vals) if vals else config.data.batch_size
+        else:
+            batch_size = config.data.batch_size
+
     eval_split = getattr(sweep_config, "eval_split", "val") if sweep_config is not None else "val"
     data_config.eval_splits = ["train", "val"] if eval_split == "all" else [eval_split]
+
+    # DataLoader 并行: 优先 sweep.num_workers, 否则沿用 data.num_workers_overrides[profile].
+    num_workers = getattr(sweep_config, "num_workers", None) if sweep_config is not None else None
+    if num_workers is None:
+        nw_overrides = getattr(config.data, "num_workers_overrides", None)
+        profile = getattr(config, "profile", "local")
+        num_workers = getattr(nw_overrides, profile, 0) if nw_overrides is not None else 0
 
     datasets = []
     for split in data_config.eval_splits:
@@ -59,29 +79,44 @@ def _build_dataloader(config):
         datasets.append(get_dataset(type="training", data_config=data_config))
     dataset = datasets[0] if len(datasets) == 1 else ConcatDataset(datasets)
 
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=num_workers > 0,
+    )
     return data_config, dataloader
 
 
-def _infer_prob_maps(model, dataloader, device) -> List[Tuple[torch.Tensor, torch.Tensor]]:
-    """对验证集逐 batch 推理, 返回 (sigmoid 概率图, diff) 列表
+def _infer_and_count(model, dataloader, device, thresholds: List[float]) -> Dict[float, Dict[str, float]]:
+    """对评测集逐 batch 推理, 并按每个阈值即时累积混淆矩阵计数.
 
-    推理逻辑与 pipelines.train.process_batch 保持一致:
-    输入 = 驱动因子 + srcLU one-hot 通道拼接, diff 经 remove_lines 去小斑块
+    不再缓存 sigmoid 概率图: 概率图体积大(1815×1×128×128 float32 ≈ 119MB/模型),
+    且阈值段要逐图重读. 这里在 inference_mode 下逐 batch 直接对 4 个阈值各算一次
+    混淆矩阵并累加, 与「先存概率图再重二值化」在数学上逐位等价(像素计数为整数).
+
+    Returns
+    -------
+        counts: {threshold: {'tp','fp','tn','fn','total_samples'}}
     """
     model.eval()
-    prob_maps: List[Tuple[torch.Tensor, torch.Tensor]] = []
-    with torch.no_grad():
+    meters = {thr: MetricsMeter(threshold=thr, accumulate_counts=True, device=device) for thr in thresholds}
+    with torch.inference_mode():
         for data_pack in dataloader:
-            factors_src = torch.tensor(data_pack[0], dtype=torch.float32).to(device)
-            lu_src = torch.tensor(data_pack[1], dtype=torch.float32).to(device)
-            diff = torch.tensor(data_pack[2], dtype=torch.float32).to(device)
-            diff = remove_lines_forbatch(diff.cpu()).to(device)
+            factors_src = torch.as_tensor(data_pack[0], dtype=torch.float32).to(device, non_blocking=True)
+            lu_src = torch.as_tensor(data_pack[1], dtype=torch.float32).to(device, non_blocking=True)
+            # GT 清洗与原实现逐位一致(在 CPU 完成后一次性上卡)
+            diff = remove_lines_forbatch(
+                torch.as_tensor(data_pack[2], dtype=torch.float32)
+            ).to(device, non_blocking=True)
 
             inputs = torch.cat([factors_src, lu_src], dim=1)
             outputs = F.sigmoid(model(inputs))
-            prob_maps.append((outputs, diff))
-    return prob_maps
+            for thr in thresholds:
+                meters[thr].update(outputs, diff)
+    return {thr: m.get_metrics() for thr, m in meters.items()}
 
 
 def _render_markdown_table(results: Dict[str, Dict], threshold: float) -> str:
@@ -197,8 +232,9 @@ def threshold_sweep_pipeline(config_path: str,
     print(f"评测数据集: splits={data_config.eval_splits}, pack={data_config.pack}, "
           f"共 {len(dataloader)} 个batch")
 
-    # 3. 每个模型推理一次, 缓存 sigmoid 概率图
-    prob_maps_cache: Dict[str, List[Tuple[torch.Tensor, torch.Tensor]]] = {}
+    # 3. 每个模型推理一次, 并按所有阈值即时累积混淆矩阵计数
+    #    all_counts[model_name][threshold] = metrics_dict
+    all_counts: Dict[str, Dict[float, Dict]] = {}
     in_ch = len(config.data.factor_list) + 6  # 驱动因子 + LU one-hot 通道
     for model_name, ckpt_path in models.items():
         print(f"\n================= 推理模型: {model_name} =================")
@@ -209,7 +245,10 @@ def threshold_sweep_pipeline(config_path: str,
             model_config=getattr(config.model, model_name, {}),
         ).to(device)
         model.load_state_dict(torch.load(ckpt_path, map_location=device))
-        prob_maps_cache[model_name] = _infer_prob_maps(model, dataloader, device)
+        all_counts[model_name] = _infer_and_count(model, dataloader, device, thresholds)
+        del model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     # 4. 输出目录 (优先用 config.result.sweep_dir 模板, 否则回退旧目录)
     result_cfg = getattr(config, 'result', None)
@@ -219,15 +258,12 @@ def threshold_sweep_pipeline(config_path: str,
         out_dir = os.path.join("checkpoints", "threshold_sweep")
     ensure_folder(out_dir)
 
-    # 5. 每个阈值重二值化并计算指标, 输出一张表 + 一个 json
+    # 5. 整理每个阈值的指标表, 输出一张表 + 一个 json
     all_results: Dict[float, Dict] = {}
     for thr in thresholds:
         results: Dict[str, Dict] = {}
         for model_name in models.keys():
-            meter = MetricsMeter(threshold=thr)
-            for prob, diff in prob_maps_cache[model_name]:
-                meter.update(prob, diff)
-            metrics = meter.get_metrics()
+            metrics = dict(all_counts[model_name][thr])
             metrics["model_name"] = model_name
             results[model_name] = metrics
 
