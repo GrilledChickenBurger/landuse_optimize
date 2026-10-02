@@ -8,9 +8,14 @@ TransUNet 编码器注意力的可插拔模块库。
   weights : vis=True 时返回 [B, h, N, N] 注意力权重, 否则为 None
 
 支持的类型:
-  vanilla - 官方 TransUNet 的 MHSA (默认; 参数命名与官方一致, 历史 checkpoint 可继续加载)
-  agent   - Agent Attention (ECCV 2024), 代理 token 两步注意力
-  swinv2  - Swin Transformer V2 (CVPR 2022), 缩放余弦注意力 + Log-CPB 相对位置偏置
+  vanilla       - 官方 TransUNet 的 MHSA (默认; 参数命名与官方一致, 历史 checkpoint 可继续加载)
+  agent         - Agent Attention (ECCV 2024), 代理 token 两步注意力
+  swinv2        - Swin Transformer V2 (CVPR 2022), 缩放余弦注意力 + Log-CPB 相对位置偏置
+  sra           - PVT 空间缩减注意力 (ICCV 2021), Q 全分辨率 / K-V 空间缩减
+  axial         - 轴向注意力 (ECCV 2020), 沿宽轴 / 高轴分解
+  neighborhood  - 邻域注意力 (CVPR 2023), 逐像素滑动窗口
+  dinat         - 空洞邻域注意力 (2022), 邻域内空洞采样扩感受野
+  dilateformer  - DilateFormer 多尺度空洞注意力 (ICCV 2023), 逐 head 不同 dilation
 """
 
 import torch.nn as nn
@@ -18,12 +23,22 @@ import torch.nn as nn
 from .vanilla import VanillaAttention
 from .agent import AgentAttention
 from .swin_v2 import ScaledCosineAttention
+from .pvt_sra import SpatialReductionAttention
+from .axial import AxialAttention
+from .neighborhood import NeighborhoodAttention
+from .dinat import DilatedNeighborhoodAttention
+from .dilateformer import DilateFormerAttention
 
 # attn_type -> 实现类
 ATTENTION_REGISTRY = {
     "vanilla": VanillaAttention,
     "agent": AgentAttention,
     "swinv2": ScaledCosineAttention,
+    "sra": SpatialReductionAttention,
+    "axial": AxialAttention,
+    "neighborhood": NeighborhoodAttention,
+    "dinat": DilatedNeighborhoodAttention,
+    "dilateformer": DilateFormerAttention,
 }
 
 
