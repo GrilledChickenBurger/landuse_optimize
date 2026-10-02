@@ -5,14 +5,15 @@
 # 差异: 去掉 load_from 预训练权重 (从头训练); img_size=128 (官方 224); n_classes=1 (二分类).
 # 参数量: ~105.2M (in_channels=10, class_num=1, img_size=128)
 
-import math
 from collections import OrderedDict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from torch.nn import Dropout, Softmax, Linear, Conv2d, LayerNorm
+from torch.nn import Dropout, Linear, Conv2d, LayerNorm
 from torch.nn.modules.utils import _pair
+
+from .attention import build_attention
 
 
 class ConfigDict(dict):
@@ -162,53 +163,6 @@ class ResNetV2(nn.Module):
 
 # ---- ViT (transformer encoder) ----
 
-class Attention(nn.Module):
-    def __init__(self, config, vis):
-        super(Attention, self).__init__()
-        self.vis = vis
-        self.num_attention_heads = config.transformer["num_heads"]
-        self.attention_head_size = int(config.hidden_size / self.num_attention_heads)
-        self.all_head_size = self.num_attention_heads * self.attention_head_size
-
-        self.query = Linear(config.hidden_size, self.all_head_size)
-        self.key = Linear(config.hidden_size, self.all_head_size)
-        self.value = Linear(config.hidden_size, self.all_head_size)
-        self.out = Linear(config.hidden_size, config.hidden_size)
-
-        self.attn_dropout = Dropout(config.transformer["attention_dropout_rate"])
-        self.proj_dropout = Dropout(config.transformer["attention_dropout_rate"])
-        self.softmax = Softmax(dim=-1)
-
-    def transpose_for_scores(self, x):
-        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
-        x = x.view(*new_x_shape)
-        return x.permute(0, 2, 1, 3)
-
-    def forward(self, hidden_states):
-        mixed_query_layer = self.query(hidden_states)
-        mixed_key_layer = self.key(hidden_states)
-        mixed_value_layer = self.value(hidden_states)
-
-        query_layer = self.transpose_for_scores(mixed_query_layer)
-        key_layer = self.transpose_for_scores(mixed_key_layer)
-        value_layer = self.transpose_for_scores(mixed_value_layer)
-
-        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-        attention_scores = attention_scores / math.sqrt(self.attention_head_size)
-        attention_probs = self.softmax(attention_scores)
-
-        weights = attention_probs if self.vis else None
-        attention_probs = self.attn_dropout(attention_probs)
-
-        context_layer = torch.matmul(attention_probs, value_layer)
-        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
-        context_layer = context_layer.view(*new_context_layer_shape)
-        attention_output = self.out(context_layer)
-        attention_output = self.proj_dropout(attention_output)
-        return attention_output, weights
-
-
 class Mlp(nn.Module):
     def __init__(self, config):
         super(Mlp, self).__init__()
@@ -285,7 +239,16 @@ class Block(nn.Module):
         self.attention_norm = LayerNorm(config.hidden_size, eps=1e-6)
         self.ffn_norm = LayerNorm(config.hidden_size, eps=1e-6)
         self.ffn = Mlp(config)
-        self.attn = Attention(config, vis)
+        # 注意力模块由 attn_type 配置开关决定, 见 models/attention/
+        self.attn = build_attention(
+            attn_type=getattr(config, "attn_type", "vanilla"),
+            dim=config.hidden_size,
+            num_heads=config.transformer["num_heads"],
+            grid_size=getattr(config, "attn_grid_size", 0),
+            attn_dropout=config.transformer["attention_dropout_rate"],
+            vis=vis,
+            **getattr(config, "attn_kwargs", {}),
+        )
 
     def forward(self, x):
         h = x
@@ -450,15 +413,32 @@ class VisionTransformer(nn.Module):
         return logits
 
 
+def _normalize_attn_kwargs(attn_kwargs) -> dict:
+    """attn_kwargs 来自 YAML, 经 get_yaml 后可能已被递归转成 Namespace, 这里统一成 dict。"""
+    if attn_kwargs is None:
+        return {}
+    if hasattr(attn_kwargs, "__dict__"):
+        return dict(vars(attn_kwargs))
+    return dict(attn_kwargs)
+
+
 class TransUNet(nn.Module):
     """
     TransUNet, 对齐 Beckschen/TransUNet 官方 R50-ViT-B_16 实现 (从头训练).
+
+    attn_type 为编码器注意力模块开关 (vanilla / agent / swinv2), 见 models/attention/;
+    attn_kwargs 为所选模块的专属超参 (如 agent 的 num_agent)。
     """
-    def __init__(self, in_channels: int = 3, class_num: int = 1, img_size: int = 224):
+    def __init__(self, in_channels: int = 3, class_num: int = 1, img_size: int = 224,
+                 attn_type: str = "vanilla", attn_kwargs=None):
         super().__init__()
         config = get_r50_b16_config()
         config.n_classes = class_num
         config.patches.grid = (img_size // 16, img_size // 16)
+        config.attn_type = attn_type
+        config.attn_kwargs = _normalize_attn_kwargs(attn_kwargs)
+        # 混合编码器对输入做 16 倍下采样, 故 token 网格边长为 img_size // 16
+        config.attn_grid_size = img_size // 16
         self.vit = VisionTransformer(config, img_size=img_size,
                                      num_classes=class_num,
                                      zero_head=False, vis=False,
