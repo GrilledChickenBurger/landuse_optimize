@@ -9,7 +9,7 @@ import json
 import shutil
 import argparse
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -198,6 +198,19 @@ def _init_worker(worker_id: int):
     若 worker 仍开多线程, 多进程 × 多线程会远超容器 CPU 配额, 引发 OpenMP 自旋抢核.
     """
     torch.set_num_threads(1)
+
+
+def _apply_model_overrides(config, overrides: Optional[Dict[str, Dict]]) -> None:
+    """把 {模型名: {字段: 值}} 的覆盖项写入 config.model.<模型名>.
+
+    用于在配置文件不变的前提下跑同一模型的变体 (如 TransUNet 的三种 attn_type)。
+    """
+    for model_name, fields in (overrides or {}).items():
+        model_cfg = getattr(config.model, model_name, None)
+        if model_cfg is None:
+            raise ValueError(f"配置中没有 model.{model_name}, 无法覆盖字段 {list(fields)}")
+        for key, value in fields.items():
+            setattr(model_cfg, key, value)
 
 
 def _resolve_optimizer_config(config, model_type: str):
@@ -468,7 +481,10 @@ def _train_single_model(config, model_type: str, device: torch.device, run_times
 
 
 def hybrid_train_pipeline(config_path: str, model_list: Optional[List[str]] = None,
-                          resume_timestamp: Optional[str] = None) -> None:
+                          resume_timestamp: Optional[str] = None,
+                          ratio_1015_override: Optional[float] = None,
+                          ratio_1520_override: Optional[float] = None,
+                          model_config_overrides: Optional[Dict[str, Dict]] = None) -> None:
     """遍历模型列表, 依次用混合训练集训练.
 
     Parameters
@@ -480,11 +496,23 @@ def hybrid_train_pipeline(config_path: str, model_list: Optional[List[str]] = No
     resume_timestamp: str, optional
         断点续训: 传入上次训练的 run_timestamp (如 "20260212_045750"),
         则从 checkpoints/{model_name}/{resume_timestamp}/latest_checkpoint.pth 续训.
+    ratio_1015_override: float, optional
+        仅内存覆盖 config.hybrid.ratio_1015 (不落盘), 用于 r1 扫描.
+    ratio_1520_override: float, optional
+        仅内存覆盖 config.hybrid.ratio_1520 (不落盘), 用于 r2 扫描.
+    model_config_overrides: Dict[str, Dict], optional
+        按模型覆盖 config.model.<模型名> 的字段 (不落盘), 如
+        {"transunet": {"attn_type": "agent"}}, 用于跑同一模型的注意力变体.
     """
     config = get_yaml(config_path)
     device = torch.device("cuda" if torch.cuda.is_available() and config.device.use_gpu else "cpu")
     print(f"使用设备: {device}")
 
+    if ratio_1015_override is not None:
+        config.hybrid.ratio_1015 = ratio_1015_override  # 仅内存覆盖, 不落盘
+    if ratio_1520_override is not None:
+        config.hybrid.ratio_1520 = ratio_1520_override  # 仅内存覆盖, 不落盘
+    _apply_model_overrides(config, model_config_overrides)
     model_list = model_list or config.hybrid.model_list
     run_timestamp = resume_timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -534,6 +562,7 @@ def hybrid_train_pipeline(config_path: str, model_list: Optional[List[str]] = No
             models=model_checkpoints,
             run_timestamp=run_timestamp,
             doc_info=doc_info,
+            model_config_overrides=model_config_overrides,
         )
     except Exception as e:
         print(f"\n[error] 阈值扫描失败 (不影响已完成的模型训练): {e}")

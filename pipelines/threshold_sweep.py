@@ -202,7 +202,8 @@ def threshold_sweep_pipeline(config_path: str,
                              thresholds: List[float] = None,
                              models: Dict[str, str] = None,
                              run_timestamp: str = None,
-                             doc_info: Dict = None) -> None:
+                             doc_info: Dict = None,
+                             model_config_overrides: Dict[str, Dict] = None) -> None:
     """
     多阈值扫描: 对每个阈值, 在验证集上评估所有预训练模型并输出一张指标表格
 
@@ -213,6 +214,8 @@ def threshold_sweep_pipeline(config_path: str,
         models: Dict[str, str], 模型名称 -> checkpoint 路径; None 用默认 MODEL_CHECKPOINTS
         run_timestamp: str, 输出目录时间戳; None 则当前时间生成
         doc_info: Dict, 训练配置与数据构成, 用于写说明文档
+        model_config_overrides: Dict[str, Dict], 按模型覆盖 config.model.<模型名> 字段,
+            如 {"transunet": {"attn_type": "agent"}}, 用于加载注意力变体 checkpoint
     """
     print("\n================= 开始多阈值模型扫描 =================")
     if thresholds is None:
@@ -224,6 +227,13 @@ def threshold_sweep_pipeline(config_path: str,
 
     # 1. 加载配置与设备
     config = get_yaml(config_path)
+    if model_config_overrides:
+        for _mname, _fields in model_config_overrides.items():
+            _mcfg = getattr(config.model, _mname, None)
+            if _mcfg is None:
+                raise ValueError(f"配置中没有 model.{_mname}, 无法覆盖字段 {list(_fields)}")
+            for _key, _value in _fields.items():
+                setattr(_mcfg, _key, _value)
     device = torch.device("cuda" if torch.cuda.is_available() and config.device.use_gpu else "cpu")
     print(f"使用设备: {device}")
 
