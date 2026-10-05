@@ -274,6 +274,23 @@ def cal_loss_bce_dice(output: torch.Tensor, target: torch.Tensor,
     return bce_weight * ce + (1.0 - bce_weight) * dice
 
 
+def cal_loss_ce_dice_swinunet(output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """
+    Swin-Unet 官方损失: 0.4 * CE + 0.6 * soft-Dice (smooth=1e-5).
+
+    官方 HuCaoFighting/Swin-Unet 的 trainer.py: loss = 0.4 * loss_ce + 0.6 * loss_dice,
+    其中 CE 为无类别权重 CrossEntropyLoss, Dice 为 soft dice (utils.py, smooth=1e-5,
+    对整 batch 求和 + 各类别宏平均)。该 Dice 与本文件 cal_loss_bce_dice 的 _dice 完全一致,
+    故直接复用 cal_loss_bce_dice(bce_weight=0.4, dice_smooth=1e-5) 承载 (C=2 时 CE≡BCEWithLogits).
+
+    Parameters
+    ----------
+    - output: 模型输出(logits), 形状 (batch_size, 1, 128, 128)
+    - target: 目标值, 形状 (batch_size, 1, 128, 128)
+    """
+    return cal_loss_bce_dice(output, target, bce_weight=0.4, dice_smooth=1e-5)
+
+
 def cal_loss_dice(output: torch.Tensor, target: torch.Tensor,
                   smooth: float = 0.01) -> torch.Tensor:
     """
@@ -420,8 +437,10 @@ ORIGINAL_LOSS_MAP = {
     'fcn':       'bce',
     'segformer': 'bce',          # SegFormer: 未加权 CrossEntropy ≡ BCE
     'transunet': 'bce_dice',     # TransUNet 官方实现: 0.5*CE + 0.5*Dice (smooth=1e-5)
+    'swinunet':  'ce_dice_swinunet',  # Swin-Unet 官方实现: 0.4*CE + 0.6*soft-Dice (smooth=1e-5)
     'vit':       'bce',          # ViT: 官方未加权 softmax CE (无 label smoothing/mixup), C=2 等价 BCE
     'swin':      'bce_ls',       # Swin: 官方关闭 mixup 时的 label smoothing 分支 (timm LabelSmoothingCE, eps=0.1)
+    'crossformer': 'bce',        # CrossFormer: 官方未加权 CrossEntropy (分类), C=2 等价 BCE
     # 其余新增模型: 论文原版损失无法直接用于"单网络逐像素二分类"口径,
     # 暂回退到像素级 BCE + Dice (cgan 的对抗损失需双网络, 本项目只移植生成器;
     # convlstm 原论文为回归任务, 没有对应的分割损失)
@@ -435,6 +454,7 @@ _ORIGINAL_LOSS_FNS = {
     'dice':        cal_loss_dice,
     'weighted_ce': cal_loss_weighted_ce,
     'bce_dice':    cal_loss_bce_dice,
+    'ce_dice_swinunet': cal_loss_ce_dice_swinunet,
 }
 
 
