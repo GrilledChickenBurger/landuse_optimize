@@ -28,6 +28,18 @@ _COMPARISON_DIRS = ['B_unguided', 'C_random']
 # ------------------------------------------------------------
 # 目录扫描（兼容新老结构）
 # ------------------------------------------------------------
+def get_latest_experiment_dir(category: str = 'ablation') -> str:
+    """自动查找 results/<category>/ 下最新的时间戳目录 (按目录名排序, 不受修改时间影响)。"""
+    experiment_root = os.path.join("results", category)
+    if not os.path.exists(experiment_root):
+        raise FileNotFoundError(f"未找到实验结果目录: {experiment_root}")
+    dirs = [d for d in os.listdir(experiment_root) if os.path.isdir(os.path.join(experiment_root, d))]
+    if not dirs:
+        raise FileNotFoundError(f"实验结果目录为空: {experiment_root}")
+    dirs.sort(reverse=True)  # 时间戳格式 yyyymmdd_HHMMSS 按字符串排序即按时间
+    return os.path.join(experiment_root, dirs[0])
+
+
 def _list_samples(exp_dir: str) -> List[str]:
     """返回该实验目录下所有出现过的样本 index (去重 + 排序).
 
@@ -1007,6 +1019,35 @@ def _load_representative_meta(rep_json_path: str) -> Tuple[Dict[str, int], List[
                 ranges.append((float(q_raw[key]['min']), float(q_raw[key]['max'])))
                 break
     return npred_map, ranges
+
+
+# representative_samples.json 缺失时回退的代表性样本索引
+DEFAULT_REPRESENTATIVE_IDXS = [479, 596, 760, 634, 1903]
+
+
+def load_representative_idxs(rep_json_path: str = "_data/representative_samples.json",
+                             default: Optional[List[int]] = None) -> List[int]:
+    """读取 representative_samples.json 的 idxs_for_pipeline; 文件缺失时回退 default。
+
+    Parameters:
+    ----------
+    rep_json_path : str
+        代表性样本 JSON 路径
+    default : List[int], optional
+        文件缺失时的回退索引; None 用 DEFAULT_REPRESENTATIVE_IDXS
+
+    Returns:
+    --------
+    List[int]
+        传给消融/tornado 流水线的样本索引列表
+    """
+    if os.path.exists(rep_json_path):
+        with open(rep_json_path, 'r', encoding='utf-8') as f:
+            return [int(x) for x in json.load(f)['idxs_for_pipeline']]
+    fallback = list(DEFAULT_REPRESENTATIVE_IDXS if default is None else default)
+    print(f"[warn] {rep_json_path} 不存在, 用默认 idxs: {fallback} "
+          f"(可先运行 scripts/select_representative_samples.py 生成)")
+    return fallback
 
 
 def _classify_level(n_pred: int, q_ranges: List[Tuple[float, float]]) -> str:

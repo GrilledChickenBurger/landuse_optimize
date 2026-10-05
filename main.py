@@ -52,6 +52,9 @@ from pipelines.results_analysis import (
     sample_visualization_pipeline,
     single_experiment_stat_pipeline,
 )
+from utils.exp_sweep_utils import load_representative_idxs, get_latest_experiment_dir
+from utils.tornado_utils import DEFAULT_SENSITIVITY_PARAMS
+
 
 def run_statistic_pipeline():
     config_path = os.path.join("configs","statisticConfig.yaml")
@@ -95,36 +98,15 @@ def run_get_changed_indices_pipeline():
     print(f"所有数据集共有 {len(changed_indices)} 个变化样本, 索引为: {changed_indices}")
 
 
-def _get_latest_experiment_dir(category: str = 'ablation') -> str:
-    """自动查找 results/<category>/ 下最新的时间戳目录 (按目录名排序, 不受修改时间影响)."""
-    experiment_root = os.path.join("results", category)
-    if not os.path.exists(experiment_root):
-        raise FileNotFoundError(f"未找到实验结果目录: {experiment_root}")
-    dirs = [d for d in os.listdir(experiment_root) if os.path.isdir(os.path.join(experiment_root, d))]
-    if not dirs:
-        raise FileNotFoundError(f"实验结果目录为空: {experiment_root}")
-    dirs.sort(reverse=True)  # 时间戳格式 yyyymmdd_HHMMSS 按字符串排序即按时间
-    return os.path.join(experiment_root, dirs[0])
-
-
 def run_ablation_pipeline():
     """消融实验主线: 多次重复稳定性 + A/B/C 三组对比.
     mode 可选: 'stability' 只跑 baseline (完整方法); 'ablation' 跑 A/B/C 三组.
     样本来自 scripts/select_representative_samples.py 的输出.
     """
-    import json as _json
-    # 从代表性样本文件读 idxs (如未生成则手动指定)
-    rep_json = "_data/representative_samples.json"
-    if os.path.exists(rep_json):
-        with open(rep_json, 'r', encoding='utf-8') as f:
-            idxs = _json.load(f)['idxs_for_pipeline']
-    else:
-        print(f"[warn] {rep_json} 不存在, 用默认 idxs. 请先跑 scripts/select_representative_samples.py")
-        idxs = [479, 596, 760, 634, 1903]
     ablation_pipeline(
         opt_cfg_path=os.path.join("configs","optimizerConfig.yaml"),
         score_cfg_path=os.path.join("configs","score_cfg.yaml"),
-        idxs=idxs,
+        idxs=load_representative_idxs(),
         mode='stability',
         n_repeats=5,
     )
@@ -156,7 +138,7 @@ def run_ablation_plots_pipeline(experiment_root: str = None,
     """
     from pipelines.ablation_plots import run_all_ablation_plots, run_combined_stability_plots
     if experiment_root is None:
-        experiment_root = _get_latest_experiment_dir('ablation')
+        experiment_root = get_latest_experiment_dir('ablation')
 
     sibling_experiment_roots = sibling_experiment_roots or []
     if not sibling_experiment_roots:
@@ -195,16 +177,7 @@ def run_tornado_pipeline(max_samples: int = None):
     max_samples : int, optional
         最多使用的样本数; None 表示使用全部 idxs.
     """
-    import json as _json
-
-    rep_json = "_data/representative_samples.json"
-    if os.path.exists(rep_json):
-        with open(rep_json, 'r', encoding='utf-8') as f:
-            idxs = _json.load(f)['idxs_for_pipeline']
-    else:
-        print(f"[warn] {rep_json} 不存在, 用默认 idxs")
-        idxs = [479, 596, 760, 634, 1903]
-
+    idxs = load_representative_idxs()
     if max_samples is not None:
         idxs = random.sample(idxs, min(max_samples, len(idxs)))
 
@@ -223,30 +196,14 @@ def run_sensitivity_pipeline(top_k_params=None, max_samples: int = None):
     Parameters
     ----------
     top_k_params : list of dict, optional
-        待扫描的参数规格列表. 每项含 path, baseline, values, category.
+        待扫描的参数规格列表; None 用 utils.tornado_utils.DEFAULT_SENSITIVITY_PARAMS.
     max_samples : int, optional
         最多使用的样本数; None 表示使用全部 idxs.
     """
-    import json as _json
-
     if top_k_params is None:
-        top_k_params = [
-            {'path': 'tgt_function.lambda_ES_high', 'baseline': 1000,
-             'values': [200, 400, 600, 800, 1000, 1200, 1500, 1800, 2000],
-             'category': 'score_cfg'},
-            {'path': 'cooling_rate', 'baseline': 0.9995,
-             'values': [0.9985, 0.9990, 0.9992, 0.9993, 0.9995, 0.9996, 0.9997, 0.9998, 0.9999],
-             'category': 'opt_cfg'},
-        ]
+        top_k_params = DEFAULT_SENSITIVITY_PARAMS
 
-    rep_json = "_data/representative_samples.json"
-    if os.path.exists(rep_json):
-        with open(rep_json, 'r', encoding='utf-8') as f:
-            idxs = _json.load(f)['idxs_for_pipeline']
-    else:
-        print(f"[warn] {rep_json} 不存在, 用默认 idxs")
-        idxs = [479, 596, 760, 634, 1903]
-
+    idxs = load_representative_idxs()
     if max_samples is not None:
         idxs = random.sample(idxs, min(max_samples, len(idxs)))
 
@@ -276,7 +233,7 @@ def run_tornado_plots_pipeline(experiment_root: str = None,
     """
     from pipelines.tornado_plots import run_tornado_plots
     if experiment_root is None:
-        experiment_root = _get_latest_experiment_dir('tornado')
+        experiment_root = get_latest_experiment_dir('tornado')
     run_tornado_plots(experiment_root, baseline_name=baseline_name, mode=mode)
 
 

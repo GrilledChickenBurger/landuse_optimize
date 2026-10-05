@@ -81,6 +81,16 @@ _TORNADO_PARAMS = [
     ('strategy.tournament_k', 2, [3, 5], 'opt_cfg'),
 ]
 
+# sensitivity 一维线搜索的默认参数规格 (top_k_params 为 None 时使用)
+DEFAULT_SENSITIVITY_PARAMS = [
+    {'path': 'tgt_function.lambda_ES_high', 'baseline': 1000,
+     'values': [200, 400, 600, 800, 1000, 1200, 1500, 1800, 2000],
+     'category': 'score_cfg'},
+    {'path': 'cooling_rate', 'baseline': 0.9995,
+     'values': [0.9985, 0.9990, 0.9992, 0.9993, 0.9995, 0.9996, 0.9997, 0.9998, 0.9999],
+     'category': 'opt_cfg'},
+]
+
 
 def build_experiment_matrix(mode: str = 'tornado', n_repeats: int = 1,
                             top_k_params: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
