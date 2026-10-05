@@ -12,7 +12,7 @@ import argparse
 import hashlib
 import tempfile
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -114,6 +114,7 @@ def _write_model_report(result: dict, model_type: str, checkpoint_dir: str,
 
     # 训练配置 (只保留可 JSON 序列化的基础类型)
     optimizer_config = _resolve_optimizer_config(config, model_type)
+    model_cfg = getattr(config.model, model_type, None)
     training_config = {
         'model': model_type,
         'profile': getattr(config, 'profile', 'server'),
@@ -128,6 +129,8 @@ def _write_model_report(result: dict, model_type: str, checkpoint_dir: str,
         'seed': config.hybrid.seed,  # 数据抽样/增强种子
         'train_seed': train_seed if train_seed is not None else int(getattr(config.hybrid, 'train_seed', 0)),
         'select_metric': str(getattr(config.training, 'select_metric', 'val_loss')),
+        'attn_type': getattr(model_cfg, 'attn_type', None),
+        'use_m1': getattr(model_cfg, 'use_m1', None),
         'optimizer': {k: (v if isinstance(v, (int, float, str, bool)) else str(v))
                       for k, v in vars(optimizer_config).items()},
     }
@@ -252,6 +255,31 @@ def _apply_model_overrides(config, overrides: Optional[Dict[str, Dict]]) -> None
             raise ValueError(f"配置中没有 model.{model_name}, 无法覆盖字段 {list(fields)}")
         for key, value in fields.items():
             setattr(model_cfg, key, value)
+
+
+def _apply_hparam_overrides(config, model_list: List[str],
+                            batch_size_override: Optional[int],
+                            learning_rate_override: Optional[float]) -> None:
+    """把档位专属 batch_size / learning_rate 写回 config (仅内存, 不落盘).
+
+    用于模块扫描时给单个档位 (如显存占用大、易 OOM 的 transunet 变体) 单独降 batch / 调 lr:
+      - batch_size 覆盖 data.batch_size_overrides.{profile}.{model};
+      - learning_rate 覆盖 optimizer.{profile}.{model}.learning_rate.
+    仅影响本次 hybrid_train_pipeline 调用, 不修改配置文件.
+    """
+    if batch_size_override is None and learning_rate_override is None:
+        return
+    profile = getattr(config, 'profile', 'server')
+    bs_overrides = getattr(config.data, 'batch_size_overrides', None)
+    bs_group = getattr(bs_overrides, profile, None) if bs_overrides is not None else None
+    opt_group = getattr(getattr(config, 'optimizer', None), profile, None)
+    for model_type in model_list:
+        if batch_size_override is not None and bs_group is not None:
+            setattr(bs_group, model_type, int(batch_size_override))
+        if learning_rate_override is not None and opt_group is not None:
+            model_opt = getattr(opt_group, model_type, None) or getattr(opt_group, 'default', None)
+            if model_opt is not None:
+                model_opt.learning_rate = float(learning_rate_override)
 
 
 def _resolve_optimizer_config(config, model_type: str):
@@ -575,6 +603,8 @@ def hybrid_train_pipeline(config_path: str, model_list: Optional[List[str]] = No
                           resume_timestamp: Optional[str] = None,
                           ratio_1015_override: Optional[float] = None,
                           ratio_1520_override: Optional[float] = None,
+                          batch_size_override: Optional[int] = None,
+                          learning_rate_override: Optional[float] = None,
                           model_config_overrides: Optional[Dict[str, Dict]] = None) -> None:
     """遍历模型列表, 依次用混合训练集训练.
 
@@ -591,6 +621,10 @@ def hybrid_train_pipeline(config_path: str, model_list: Optional[List[str]] = No
         仅内存覆盖 config.hybrid.ratio_1015 (不落盘), 用于 r1 扫描.
     ratio_1520_override: float, optional
         仅内存覆盖 config.hybrid.ratio_1520 (不落盘), 用于 r2 扫描.
+    batch_size_override: int, optional
+        仅内存覆盖本档所有模型的训练 batch_size (不落盘), 用于给易 OOM 的档单独降 batch.
+    learning_rate_override: float, optional
+        仅内存覆盖本档所有模型的峰值 learning_rate (不落盘), 常与 batch_size_override 搭配缩放.
     model_config_overrides: Dict[str, Dict], optional
         按模型覆盖 config.model.<模型名> 的字段 (不落盘), 如
         {"transunet": {"attn_type": "agent"}}, 用于跑同一模型的注意力变体.
@@ -605,6 +639,7 @@ def hybrid_train_pipeline(config_path: str, model_list: Optional[List[str]] = No
         config.hybrid.ratio_1520 = ratio_1520_override  # 仅内存覆盖, 不落盘
     _apply_model_overrides(config, model_config_overrides)
     model_list = model_list or config.hybrid.model_list
+    _apply_hparam_overrides(config, model_list, batch_size_override, learning_rate_override)
     run_timestamp = resume_timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
 
     results = []
@@ -664,6 +699,86 @@ def hybrid_train_pipeline(config_path: str, model_list: Optional[List[str]] = No
         )
     except Exception as e:
         print(f"\n[error] 阈值扫描失败 (不影响已完成的模型训练): {e}")
+
+
+# 可插拔模块扫描 (HYBRID_TRANSUNET_LIST) 允许透传的 transunet 配置键
+_TRANSUNET_OVERRIDE_KEYS = {
+    "attn_type", "up_type", "conv_type", "fusion_type", "resblock_type",
+    "parallel_local", "high_res_skip", "n_skip", "use_m1",
+}
+
+
+def _parse_transunet_spec(spec: str) -> Dict[str, Any]:
+    """解析一档 transunet 覆写, 如 "up_type=dysample+parallel_local=1" -> {...}。
+
+    档内多个键用 "+" 连接; "baseline" 或空串表示不加覆写 (用配置文件默认值)。
+    值自动转换为 bool / int / str, 便于在 shell 中书写。
+    """
+    spec = spec.strip()
+    if not spec or spec.lower() == "baseline":
+        return {}
+    overrides: Dict[str, Any] = {}
+    for item in spec.split("+"):
+        if not item.strip():
+            continue
+        key, _, value = item.partition("=")
+        key, value = key.strip(), value.strip()
+        if key not in _TRANSUNET_OVERRIDE_KEYS:
+            raise ValueError(
+                f"HYBRID_TRANSUNET_LIST 不支持的键: {key!r}, 可选键为 {sorted(_TRANSUNET_OVERRIDE_KEYS)}"
+            )
+        low = value.lower()
+        if low in ("1", "true", "yes", "on"):
+            overrides[key] = True
+        elif low in ("0", "false", "no", "off"):
+            overrides[key] = False
+        elif value.lstrip("-").isdigit():
+            overrides[key] = int(value)
+        else:
+            overrides[key] = value
+    return overrides
+
+
+def _load_attn_kwargs_by_type(config) -> Dict[str, Dict[str, Any]]:
+    """读取 config.hybrid.attn_kwargs_by_type, 统一转成 {attn_type: kwargs(dict)}。"""
+    raw = getattr(config.hybrid, "attn_kwargs_by_type", None)
+    if raw is None:
+        return {}
+    items = vars(raw).items() if hasattr(raw, "__dict__") else dict(raw).items()
+    return {k: (dict(vars(v)) if hasattr(v, "__dict__") else dict(v or {})) for k, v in items}
+
+
+def _load_module_overrides(config) -> Dict[str, Dict[str, Any]]:
+    """读取 config.hybrid.module_overrides, 统一转成 {spec 原文: 超参 dict}。
+
+    键为档位 spec 的精确原文 (如 "up_type=carafe"); 仅当档位 spec 与键完全一致时才命中。
+    """
+    hybrid_cfg = getattr(config, "hybrid", None)
+    raw = getattr(hybrid_cfg, "module_overrides", None) if hybrid_cfg is not None else None
+    if not raw:
+        return {}
+    items = vars(raw).items() if hasattr(raw, "__dict__") else dict(raw).items()
+    return {k: (dict(vars(v)) if hasattr(v, "__dict__") else dict(v or {})) for k, v in items}
+
+
+def _resolve_module_override(module_overrides: Dict[str, Dict[str, Any]], spec: str):
+    """按档位 spec 精确取 (batch_size, learning_rate) 覆写, 缺省返回 (None, None)。"""
+    entry = module_overrides.get(spec) or {}
+    bs = entry.get("batch_size")
+    lr = entry.get("learning_rate")
+    return (int(bs) if bs is not None else None,
+            float(lr) if lr is not None else None)
+
+
+def _fmt_hparam_override(batch_size_override, learning_rate_override) -> str:
+    """格式化档位超参覆写供日志打印; 无覆写时返回空串。"""
+    parts = []
+    if batch_size_override is not None:
+        parts.append(f"batch_size={batch_size_override}")
+    if learning_rate_override is not None:
+        parts.append(f"learning_rate={learning_rate_override}")
+    return (" | " + ", ".join(parts)) if parts else ""
+
 
 
 # ===== Manifest-based resume (HYBRID_RESUME=1) =====
@@ -770,3 +885,136 @@ class _ResumeRunner:
         entry["status"] = "done"
         entry["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         _save_manifest_atomic(self.mpath, self.manifest)
+
+
+def run_hybrid_train_pipeline(config_path: Optional[str] = None) -> None:
+    """混合训练最外层入口: 按环境变量分派扫描/对照组任务.
+
+    所有分支统一支持断点续训, 由 HYBRID_RESUME=1 启用 manifest 机制:
+    - 首跑: 预生成 run_timestamp 写入 manifest, 作为目录名固定下来
+    - 重跑: 从 manifest 读回 run_timestamp, per-model 逻辑自动跳过/续训
+    - 强制重训: HYBRID_FORCE_RETRAIN=1 忽略已有条目, 生成新时间戳全新训练
+
+    环境变量按优先级从高到低:
+    - HYBRID_TRANSUNET_LIST="baseline,up_type=dysample,resblock_type=convnext,use_m1=1"
+        按档依次覆写 transunet 可插拔模块开关 (档内多键用 "+"), 用于模块扫描/消融;
+        第一档不加覆写时训练全部 basemodel 作基线, 后续档只训 transunet 变体。
+    - HYBRID_ATTN_LIST="vanilla,agent,swinv2"
+        固定数据比例, 依次替换 TransUNet 编码器注意力模块, 每档自动生成独立 run_timestamp;
+        各 attn_type 的专属超参取 config.hybrid.attn_kwargs_by_type。
+    - HYBRID_RATIO_LIST="0.6,0.7,...,1.0"
+        依次扫描 r1 (manifest 模式下所有档均支持断点续训, 不再需要 HYBRID_RATIO_RESUME)。
+    - HYBRID_RATIO1520_LIST="0.1,...,0.9"
+        固定 r1(取配置文件), 依次扫描 r2。
+    - HYBRID_M1=1
+        M1 对照轮: 拆 3 档 (base models / transunet / transunet+M1), 共用 train_seed 便于配对对比。
+    未设置任何上述变量时: 单次训练 (HYBRID_RESUME_TS 仍可作 legacy 显式指定时间戳)。
+
+    新增 LIST 分支接入续训只需 3 行 (实例化 _ResumeRunner + get + mark_done)。
+    """
+    config_path = config_path or os.path.join("configs", "hybridTrainConfig.yaml")
+    transunet_list_str = os.environ.get("HYBRID_TRANSUNET_LIST") or None
+    attn_list_str = os.environ.get("HYBRID_ATTN_LIST") or None
+    r1_list_str = os.environ.get("HYBRID_RATIO_LIST") or None
+    r2_list_str = os.environ.get("HYBRID_RATIO1520_LIST") or None
+
+    if transunet_list_str:
+        # 每档只训 transunet (idx=0 => train_seed=base+0), 使 baseline 与各变体共用同一
+        # train_seed, 避免把 seed 差异混进模块效应; 5-base 横向对比请另起一次(不带本变量)。
+        specs = [s.strip() for s in transunet_list_str.split(",") if s.strip()]
+        module_overrides = _load_module_overrides(get_yaml(config_path))
+        seed = _current_seed(config_path)
+        runner = _ResumeRunner(f"transunet_list:{transunet_list_str}", seed)
+        for idx, spec in enumerate(specs):
+            overrides = _parse_transunet_spec(spec)
+            bs_ov, lr_ov = _resolve_module_override(module_overrides, spec)
+            resume_ts = runner.get(spec)   # spec 原文即 spec_signature
+            print(f"\n########## [transunet 模块扫描 {idx + 1}/{len(specs)}] "
+                  f"{spec} -> {overrides or '默认(无覆写)'}"
+                  f"{_fmt_hparam_override(bs_ov, lr_ov)} ##########")
+            hybrid_train_pipeline(
+                config_path,
+                model_list=["transunet"],
+                model_config_overrides={"transunet": overrides},
+                batch_size_override=bs_ov,
+                learning_rate_override=lr_ov,
+                resume_timestamp=resume_ts,
+            )
+            runner.mark_done(spec)
+    elif attn_list_str:
+        # 第一档训练全部 basemodel (model_list 取配置文件), 后续档只训 transunet 变体,
+        # 避免无注意力开关的模型重复训练.
+        attn_kwargs_by_type = _load_attn_kwargs_by_type(get_yaml(config_path))
+        attn_types = [x.strip() for x in attn_list_str.split(",") if x.strip()]
+        seed = _current_seed(config_path)
+        runner = _ResumeRunner(f"attn_list:{attn_list_str}", seed)
+        for idx, attn_type in enumerate(attn_types):
+            spec_sig = f"attn={attn_type}"
+            resume_ts = runner.get(spec_sig)
+            print(f"\n########## 开始 attn_type = {attn_type} 的完整训练 ##########")
+            hybrid_train_pipeline(
+                config_path,
+                model_list=None if idx == 0 else ["transunet"],
+                model_config_overrides={"transunet": {
+                    "attn_type": attn_type,
+                    "attn_kwargs": attn_kwargs_by_type.get(attn_type, {}),
+                }},
+                resume_timestamp=resume_ts,
+            )
+            runner.mark_done(spec_sig)
+    elif r1_list_str:
+        # 依次扫描 r1; manifest 模式下所有档均支持断点续训, 旧 HYBRID_RATIO_RESUME 不再需要。
+        r1s = [float(x) for x in r1_list_str.split(",")]
+        seed = _current_seed(config_path)
+        runner = _ResumeRunner(f"r1_list:{r1_list_str}", seed)
+        for idx, r1 in enumerate(r1s):
+            spec_sig = f"r1={r1}"
+            resume_ts = runner.get(spec_sig)
+            print(f"\n########## 开始 r1 = {r1} 的完整训练 ##########")
+            hybrid_train_pipeline(config_path, resume_timestamp=resume_ts,
+                                  ratio_1015_override=r1)
+            runner.mark_done(spec_sig)
+    elif r2_list_str:
+        # r1 固定取配置文件值, 仅扫描 r2; manifest 模式下所有档均支持断点续训。
+        r2s = [float(x) for x in r2_list_str.split(",")]
+        seed = _current_seed(config_path)
+        runner = _ResumeRunner(f"r2_list:{r2_list_str}", seed)
+        for r2 in r2s:
+            spec_sig = f"r2={r2}"
+            resume_ts = runner.get(spec_sig)
+            print(f"\n########## 开始 r2 = {r2} 的完整训练 (r1 取配置文件) ##########")
+            hybrid_train_pipeline(config_path, resume_timestamp=resume_ts,
+                                  ratio_1520_override=r2)
+            runner.mark_done(spec_sig)
+    elif os.environ.get("HYBRID_M1", "0") == "1":
+        # M1 对照轮: 拆 3 档, 让 vanilla-transunet 与 m1-transunet 共用 train_seed(=base+0),
+        # 二者唯一差异即 M1 模块, 便于配对对比; 其余 base 模型依次 +0..+n.
+        base_models = [m for m in get_yaml(config_path).hybrid.model_list if m != "transunet"]
+        m1_steps = [
+            ("m1_step_0", {"model_list": base_models, "overrides": None}),
+            ("m1_step_1", {"model_list": ["transunet"], "overrides": None}),
+            ("m1_step_2", {"model_list": ["transunet"], "overrides": {"transunet": {"use_m1": True}}}),
+        ]
+        seed = _current_seed(config_path)
+        runner = _ResumeRunner("m1_round", seed)
+        for spec_sig, cfg in m1_steps:
+            resume_ts = runner.get(spec_sig)
+            print(f"\n########## [M1轮 {spec_sig}] ##########")
+            hybrid_train_pipeline(
+                config_path,
+                model_list=cfg["model_list"],
+                model_config_overrides=cfg["overrides"],
+                resume_timestamp=resume_ts,
+            )
+            runner.mark_done(spec_sig)
+    else:
+        # 默认单次训练: HYBRID_RESUME_TS 作 legacy 显式指定时间戳; 否则走 manifest。
+        legacy_ts = os.environ.get("HYBRID_RESUME_TS") or None
+        if legacy_ts:
+            hybrid_train_pipeline(config_path, resume_timestamp=legacy_ts)
+        else:
+            seed = _current_seed(config_path)
+            runner = _ResumeRunner("single_train", seed)
+            resume_ts = runner.get("default")
+            hybrid_train_pipeline(config_path, resume_timestamp=resume_ts)
+            runner.mark_done("default")

@@ -41,7 +41,7 @@ if _DETERMINISM and os.environ.get("LU_DETERMINISTIC_ALGO", "1") == "1":
 from pipelines.run_runner import pipeline
 from pipelines.experiment import experiment_pipeline
 from pipelines.train import training_pipeline,valid_pipeline, get_changed_indices
-from pipelines.hybrid_train import hybrid_train_pipeline
+from pipelines.hybrid_train import run_hybrid_train_pipeline
 from pipelines.threshold_sweep import threshold_sweep_pipeline
 from pipelines.statistic import get_params
 from pipelines.ablation import ablation_pipeline
@@ -83,48 +83,6 @@ def run_valid_pipeline():
     model_checkpoint_path = os.path.join("checkpoints","transunet","20260214_052453","best_model.pth")
 
     valid_pipeline(config_path, model_checkpoint_path, only_changed=False, datasets=["val"])
-
-# 各编码器注意力模块的专属超参 (attn 扫描时使用)
-_ATTN_KWARGS = {"agent": {"num_agent": 16}}
-
-def run_hybrid_train_pipeline():
-    config_path = os.path.join("configs","hybridTrainConfig.yaml")
-    # HYBRID_ATTN_LIST="vanilla,agent,swinv2" 时固定数据比例(取配置文件), 依次替换
-    #   TransUNet 编码器注意力模块, 每档自动生成独立 run_timestamp;
-    # HYBRID_RATIO_LIST="0.6,0.7,0.8,0.9,1.0" 时依次扫描 r1, 每档自动生成独立 run_timestamp;
-    # HYBRID_RATIO1520_LIST="0.1,...,0.9" 时固定 r1(取配置文件), 依次扫描 r2;
-    # 未设置时保持原逻辑: 单次训练, 可由 HYBRID_RESUME_TS 断点续训.
-    attn_list_str = os.environ.get("HYBRID_ATTN_LIST") or None
-    r1_list_str = os.environ.get("HYBRID_RATIO_LIST") or None
-    r2_list_str = os.environ.get("HYBRID_RATIO1520_LIST") or None
-    if attn_list_str:
-        # 第一档训练全部 basemodel (model_list 取配置文件), 后续档只训 transunet 变体,
-        # 避免无注意力开关的模型重复训练.
-        attn_types = [x.strip() for x in attn_list_str.split(",") if x.strip()]
-        for idx, attn_type in enumerate(attn_types):
-            print(f"\n########## 开始 attn_type = {attn_type} 的完整训练 ##########")
-            hybrid_train_pipeline(
-                config_path,
-                model_list=None if idx == 0 else ["transunet"],
-                model_config_overrides={"transunet": {"attn_type": attn_type,
-                                                      "attn_kwargs": _ATTN_KWARGS.get(attn_type, {})}},
-            )
-    elif r1_list_str:
-        # HYBRID_RATIO_RESUME: 首档(列表第1个 r1)从该 run_timestamp 断点续训, 其余档全新训练.
-        resume_first = os.environ.get("HYBRID_RATIO_RESUME") or None
-        for idx, r1 in enumerate([float(x) for x in r1_list_str.split(",")]):
-            print(f"\n########## 开始 r1 = {r1} 的完整训练 ##########")
-            rts = resume_first if (idx == 0) else None
-            hybrid_train_pipeline(config_path, resume_timestamp=rts,
-                                  ratio_1015_override=r1)
-    elif r2_list_str:
-        # r1 固定取配置文件值, 仅扫描 r2; 每档自动生成独立 run_timestamp.
-        for r2 in [float(x) for x in r2_list_str.split(",")]:
-            print(f"\n########## 开始 r2 = {r2} 的完整训练 (r1 取配置文件) ##########")
-            hybrid_train_pipeline(config_path, ratio_1520_override=r2)
-    else:
-        resume_ts = os.environ.get("HYBRID_RESUME_TS") or None
-        hybrid_train_pipeline(config_path, resume_timestamp=resume_ts)
 
 def run_threshold_sweep_pipeline():
     config_path = os.path.join("configs","trainConfig.yaml")
