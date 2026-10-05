@@ -18,8 +18,25 @@ import torch
 # 本机核数即配额, 直接用满. 两种情况都可用 TORCH_NUM_THREADS 覆盖.
 _DEFAULT_THREADS = 4 if _IS_LINUX else (os.cpu_count() or 4)
 torch.set_num_threads(int(os.environ.get("TORCH_NUM_THREADS", _DEFAULT_THREADS)))
-# 输入尺寸固定(128x128), 让 cudnn 自动挑选最快卷积算法
-torch.backends.cudnn.benchmark = True
+# 确定性配置: 默认开启可复现模式(关 benchmark + deterministic 卷积), LU_DETERMINISM=0 关闭.
+# benchmark=True 会按输入尺寸自动挑最快卷积算法, 但同一代码不同 run 可能选到不同算法,
+# 是跨 run 不可复现的主要来源之一; deterministic=True 强制确定性卷积实现(略慢但可复现).
+_DETERMINISM = os.environ.get("LU_DETERMINISM", "1") == "1"
+if _DETERMINISM:
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+else:
+    # 输入尺寸固定(128x128), 让 cudnn 自动挑选最快卷积算法
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = False
+# 强制确定性算子: 有确定性实现的算子(如 interpolate 反向)强制走确定性实现;
+# 无确定性实现的算子按 warn_only 只告警一次(不中断训练, 但该算子仍可能非确定).
+# 可用 LU_DETERMINISTIC_ALGO=0 关闭(仅在排查性能问题时建议关闭).
+if _DETERMINISM and os.environ.get("LU_DETERMINISTIC_ALGO", "1") == "1":
+    try:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except TypeError:
+        torch.use_deterministic_algorithms(True)
 
 from pipelines.run_runner import pipeline
 from pipelines.experiment import experiment_pipeline

@@ -6,11 +6,13 @@ import os
 import math
 import time
 import json
+import random
 import shutil
 import argparse
 from datetime import datetime
 from typing import Dict, List, Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils import tensorboard
@@ -25,6 +27,24 @@ from utils.training_utils import (
     get_original_loss_fn,
 )
 from pipelines.train import process_batch, visualize_outputs
+
+
+def _seed_everything(seed: int) -> None:
+    """固定 python / numpy / torch(cpu+cuda) 全局随机源.
+
+    必须在任何消耗随机数的动作之前调用, 尤其要早于:
+      1) HybridDataset(...) 构造 —— 其数据增强的随机翻转
+         (RandomHorizontalFlip/RandomVerticalFlip) 在构造期即施加, 消耗 torch 全局 RNG;
+      2) create_model(...) —— 权重初始化消耗 torch 全局 RNG.
+    多模型串行训练时, 若不在每个模型前重置, 后一个模型的初始 RNG 状态取决于前一个模型的
+    消耗量, 导致换 model_list 顺序或子集后结果漂移.
+    """
+    seed = int(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def _resolve_loss_fn(config, model_type: str):
@@ -61,7 +81,8 @@ def _build_val_dataset(config) -> 'torch.utils.data.Dataset':
 
 
 def _write_model_report(result: dict, model_type: str, checkpoint_dir: str,
-                        run_timestamp: str, train_stats: dict, config) -> str:
+                        run_timestamp: str, train_stats: dict, config,
+                        train_seed: Optional[int] = None) -> str:
     """把单模型验证指标 + 说明文档归档到 results/_model_performance/{model}/{ts}/ 下.
 
     同时写 metrics.json / info.json / README.md 三份文件, 返回归档目录.
@@ -88,7 +109,8 @@ def _write_model_report(result: dict, model_type: str, checkpoint_dir: str,
         'ratio_1015': config.hybrid.ratio_1015,
         'ratio_1520': config.hybrid.ratio_1520,
         'changed_unchanged_ratio': config.hybrid.changed_unchanged_ratio,
-        'seed': config.hybrid.seed,
+        'seed': config.hybrid.seed,  # 数据抽样/增强种子
+        'train_seed': train_seed if train_seed is not None else int(getattr(config.hybrid, 'train_seed', 0)),
         'optimizer': {k: (v if isinstance(v, (int, float, str, bool)) else str(v))
                       for k, v in vars(optimizer_config).items()},
     }
@@ -136,7 +158,8 @@ def _write_model_report(result: dict, model_type: str, checkpoint_dir: str,
         f"- 10-15 变化样本加入比例 r1: `{training_config['ratio_1015']}`\n"
         f"- 15-20 变化样本加入比例 r2: `{training_config['ratio_1520']}`\n"
         f"- 变化:非变化 目标比例 r_cu: `{training_config['changed_unchanged_ratio']}`\n"
-        f"- 随机种子: `{training_config['seed']}`\n\n"
+        f"- 随机种子(数据抽样/增强): `{training_config['seed']}`\n"
+        f"- 训练种子(权重初始化/翻转/批顺序): `{training_config['train_seed']}`\n\n"
         f"## 训练集数据构成 (来源与比例)\n\n"
         f"- 池子容量 10-15: 变化 {train_stats['n_changed_1015_pool']}, 未变化 {train_stats['n_unchanged_1015_pool']}\n"
         f"- 池子容量 15-20: 变化 {train_stats['n_changed_1520_pool']}, 未变化 {train_stats['n_unchanged_1520_pool']}\n"
@@ -239,14 +262,20 @@ def _apply_lr(optimizer, base_lrs, step, warmup_steps, decay_steps, min_lr, use_
 
 
 def _train_single_model(config, model_type: str, device: torch.device, run_timestamp: str,
-                        checkpoint_path: Optional[str] = None) -> dict:
+                        checkpoint_path: Optional[str] = None,
+                        train_seed: Optional[int] = None) -> dict:
     """使用混合训练集训练单个模型."""
     data_config = config.data
     train_config = config.training
     hybrid_config = config.hybrid
     optimizer_config = _resolve_optimizer_config(config, model_type)
 
-    print(f"\n================= 开始训练模型【{model_type}】... =================")
+    # 训练种子: 必须在 HybridDataset(构造期做随机翻转增强)与 create_model(权重初始化)之前固定,
+    # 否则两轮之间增强结果与初始权重都不可复现.
+    if train_seed is None:
+        train_seed = int(getattr(hybrid_config, 'train_seed', 0))
+    _seed_everything(train_seed)
+    print(f"\n================= 开始训练模型【{model_type}】 (train_seed={train_seed}) =================")
 
     # 1. 训练集(混合) + 验证集(val + 15-20)
     train_dataset = HybridDataset(
@@ -470,6 +499,7 @@ def _train_single_model(config, model_type: str, device: torch.device, run_times
         run_timestamp=run_timestamp,
         train_stats=train_dataset.stats,
         config=config,
+        train_seed=train_seed,
     )
     print(f"验证报告已归档: {report_dir}")
 
@@ -517,7 +547,11 @@ def hybrid_train_pipeline(config_path: str, model_list: Optional[List[str]] = No
     run_timestamp = resume_timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
 
     results = []
-    for model_type in model_list:
+    # 训练种子基值: 第 i 个模型用 base + i, 保证同一 base 下各模型独立且整体可复现;
+    # 可用环境变量 LU_TRAIN_SEED 覆盖, 便于「同一配置换种子重跑」做稳定性验收.
+    train_seed_base = int(os.environ.get("LU_TRAIN_SEED", int(getattr(config.hybrid, 'train_seed', 0))))
+    for idx, model_type in enumerate(model_list):
+        model_seed = train_seed_base + idx
         checkpoint_path = None
         if resume_timestamp:
             # 断点续训: 有 latest_checkpoint.pth 则从断点续; 已有 val_hybrid.json 说明该模型
@@ -533,7 +567,8 @@ def hybrid_train_pipeline(config_path: str, model_list: Optional[List[str]] = No
             if os.path.exists(candidate):
                 checkpoint_path = candidate
                 print(f"模型【{model_type}】检测到断点 {candidate}, 将从断点续训.")
-        result = _train_single_model(config, model_type, device, run_timestamp, checkpoint_path=checkpoint_path)
+        result = _train_single_model(config, model_type, device, run_timestamp,
+                                     checkpoint_path=checkpoint_path, train_seed=model_seed)
         results.append(result)
 
     print(f"\n================= 全部模型训练完成! =================")
@@ -548,6 +583,7 @@ def hybrid_train_pipeline(config_path: str, model_list: Optional[List[str]] = No
             'ratio_1520': config.hybrid.ratio_1520,
             'changed_unchanged_ratio': config.hybrid.changed_unchanged_ratio,
             'seed': config.hybrid.seed,
+            'train_seed_base': train_seed_base,
             'num_epochs': config.training.num_epochs,
             'factor_list': config.data.factor_list,
             'batch_size': config.data.batch_size,
