@@ -9,6 +9,8 @@ import json
 import random
 import shutil
 import argparse
+import hashlib
+import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -45,6 +47,20 @@ def _seed_everything(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def _is_better(score: float, best: float, higher_is_better: bool) -> bool:
+    """统一选点比较: higher_is_better=True 取更大值, 否则取更小值."""
+    return score > best if higher_is_better else score < best
+
+
+def _metric_score(metrics: dict, select_metric: str) -> float:
+    """从 MetricsMeter 指标字典按选点准则取分值 (仅支持指标类准则)."""
+    if select_metric.startswith('f1'):
+        return float(metrics.get('f1_score', 0.0))
+    if select_metric.startswith('iou'):
+        return float(metrics.get('iou', 0.0))
+    raise ValueError("select_metric=%s 不支持从指标字典取分值." % select_metric)
 
 
 def _resolve_loss_fn(config, model_type: str):
@@ -111,6 +127,7 @@ def _write_model_report(result: dict, model_type: str, checkpoint_dir: str,
         'changed_unchanged_ratio': config.hybrid.changed_unchanged_ratio,
         'seed': config.hybrid.seed,  # 数据抽样/增强种子
         'train_seed': train_seed if train_seed is not None else int(getattr(config.hybrid, 'train_seed', 0)),
+        'select_metric': str(getattr(config.training, 'select_metric', 'val_loss')),
         'optimizer': {k: (v if isinstance(v, (int, float, str, bool)) else str(v))
                       for k, v in vars(optimizer_config).items()},
     }
@@ -159,7 +176,8 @@ def _write_model_report(result: dict, model_type: str, checkpoint_dir: str,
         f"- 15-20 变化样本加入比例 r2: `{training_config['ratio_1520']}`\n"
         f"- 变化:非变化 目标比例 r_cu: `{training_config['changed_unchanged_ratio']}`\n"
         f"- 随机种子(数据抽样/增强): `{training_config['seed']}`\n"
-        f"- 训练种子(权重初始化/翻转/批顺序): `{training_config['train_seed']}`\n\n"
+        f"- 训练种子(权重初始化/翻转/批顺序): `{training_config['train_seed']}`\n"
+        f"- checkpoint 选点准则: `{training_config['select_metric']}`\n\n"
         f"## 训练集数据构成 (来源与比例)\n\n"
         f"- 池子容量 10-15: 变化 {train_stats['n_changed_1015_pool']}, 未变化 {train_stats['n_unchanged_1015_pool']}\n"
         f"- 池子容量 15-20: 变化 {train_stats['n_changed_1520_pool']}, 未变化 {train_stats['n_unchanged_1520_pool']}\n"
@@ -355,7 +373,13 @@ def _train_single_model(config, model_type: str, device: torch.device, run_times
 
     # 4. 训练循环初始化
     epochs = train_config.num_epochs
-    best_val_loss = float('inf')
+    # 选点准则: "f1_0.5" 按验证 F1@0.5 选最优(越高越好); "val_loss" 回退旧口径(越低越好).
+    select_metric = str(getattr(train_config, 'select_metric', 'val_loss')).lower()
+    if select_metric not in ('f1_0.5', 'f1', 'iou', 'iou_0.5', 'val_loss'):
+        raise ValueError(f"未知的 training.select_metric: {select_metric}")
+    higher_is_better = select_metric != 'val_loss'
+    best_score = -float('inf') if higher_is_better else float('inf')
+    best_val_loss = float('inf')  # 历史最小 val_loss, 仅用于归档/日志, 不参与选点
     start_epoch = 0
     epochs_since_improvement = 0
     tensorboard_step = 0
@@ -368,16 +392,43 @@ def _train_single_model(config, model_type: str, device: torch.device, run_times
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         epochs_since_improvement = checkpoint.get('epochs_since_improvement', 0)
-        # 旧版 checkpoint 未存 best_val_loss: 先备份已有 best_model.pth, 避免 resume 后首个
-        # val_loss (< inf) 立刻用当前(可能更差)权重覆盖历史最优.
-        if 'best_val_loss' in checkpoint:
-            best_val_loss = checkpoint['best_val_loss']
+        # 选点准则必须与 checkpoint 一致, 否则新旧口径混用会导致 best_model 误覆盖.
+        ckpt_metric = str(checkpoint.get('select_metric', 'val_loss')).lower()
+        if ckpt_metric != select_metric:
+            raise ValueError(
+                f"checkpoint 选点准则({ckpt_metric})与当前配置({select_metric})不一致, "
+                f"不支持跨准则 resume; 请统一配置, 或删除 {checkpoint_path} 重新训练."
+            )
+        # 恢复历史最优分值.
+        if 'best_score' in checkpoint:
+            best_score = checkpoint['best_score']
+        elif 'best_val_loss' in checkpoint:
+            # 兼容仅存 best_val_loss 的旧版 checkpoint (仅 val_loss 准则下等价).
+            best_score = checkpoint['best_val_loss']
         else:
+            # 缺历史最优: 备份已有 best_model.pth, 并用当前权重跑一遍验证建立基线,
+            # 避免 resume 后第一个(可能更差的)epoch 立刻覆盖历史最优.
             best_model_path = os.path.join(checkpoint_dir, "best_model.pth")
             backup_path = os.path.join(checkpoint_dir, "best_model_pre_resume.pth")
             if os.path.exists(best_model_path) and not os.path.exists(backup_path):
                 shutil.copyfile(best_model_path, backup_path)
-                print(f"[warn] checkpoint 无 best_val_loss 字段, 历史最优已备份为 {backup_path}")
+                print(f"[warn] checkpoint 无历史最优字段, 历史最优已备份为 {backup_path}")
+            print("[warn] checkpoint 无历史最优字段, 用当前权重跑一遍验证以建立选点基线...")
+            model.eval()
+            baseline_loss = ExpoAverageMeter()
+            baseline_metric = MetricsMeter(device=device, threshold=0.5, accumulate_counts=True)
+            with torch.no_grad():
+                for data_pack in val_dataloader:
+                    loss, outputs, diff = process_batch(data_pack, model, device, loss_fn=loss_fn)
+                    baseline_loss.update(loss.item())
+                    baseline_metric.update(torch.sigmoid(outputs), diff)
+            if higher_is_better:
+                best_score = _metric_score(baseline_metric.get_metrics(), select_metric)
+            else:
+                best_score = baseline_loss.avg
+            print(f"[warn] 选点基线 {select_metric}={best_score:.4f}")
+        if 'best_val_loss' in checkpoint:
+            best_val_loss = checkpoint['best_val_loss']
         tensorboard_step = start_epoch * len(train_dataloader)
         run_timestamp = checkpoint.get('timestamp', run_timestamp)
         checkpoint_dir = os.path.dirname(checkpoint_path)
@@ -422,25 +473,33 @@ def _train_single_model(config, model_type: str, device: torch.device, run_times
         if writer:
             writer.add_scalar('Loss/train_epoch', epoch_loss, (epoch + 1) * len(train_dataloader))
 
-        # 验证
+        # 验证: 同时统计 loss 与 F1/IoU@0.5 (后者用于选点)
         model.eval()
         val_loss = ExpoAverageMeter()
+        val_metric = MetricsMeter(device=device, threshold=0.5, accumulate_counts=True)
         with torch.no_grad():
             for data_pack in val_dataloader:
-                loss, _, _ = process_batch(data_pack, model, device, loss_fn=loss_fn)
+                loss, outputs, diff = process_batch(data_pack, model, device, loss_fn=loss_fn)
                 val_loss.update(loss.item())
+                val_metric.update(torch.sigmoid(outputs), diff)
         val_epoch_loss = val_loss.avg
-        print(f'Epoch [{epoch+1}/{epochs}], Val Loss: {val_epoch_loss:.4f}\n')
+        best_val_loss = min(best_val_loss, val_epoch_loss)
+        val_metrics = val_metric.get_metrics()
+        val_score = _metric_score(val_metrics, select_metric) if higher_is_better else val_epoch_loss
+        print(f'Epoch [{epoch+1}/{epochs}], Val Loss: {val_epoch_loss:.4f}, '
+              f'F1@0.5: {val_metrics["f1_score"]:.4f}, IoU@0.5: {val_metrics["iou"]:.4f}\n')
         if writer:
             writer.add_scalar('Loss/val_epoch', val_epoch_loss, (epoch + 1) * len(train_dataloader))
+            writer.add_scalar('F1/val', val_metrics['f1_score'], (epoch + 1) * len(train_dataloader))
+            writer.add_scalar('IoU/val', val_metrics['iou'], (epoch + 1) * len(train_dataloader))
             writer.add_scalar('LR', optimizer.param_groups[0]['lr'], (epoch + 1) * len(train_dataloader))
 
-        # 保存 best / checkpoint
-        if val_epoch_loss < best_val_loss:
-            best_val_loss = val_epoch_loss
+        # 保存 best / checkpoint: 按 select_metric 选点 (f1_0.5 越高越好; val_loss 越低越好)
+        if _is_better(val_score, best_score, higher_is_better):
+            best_score = val_score
             epochs_since_improvement = 0
             torch.save(model.state_dict(), os.path.join(checkpoint_dir, "best_model.pth"))
-            print(f"Best model saved (Val Loss: {best_val_loss:.4f})")
+            print(f"Best model saved ({select_metric}: {best_score:.4f}, Val Loss: {val_epoch_loss:.4f})")
         else:
             epochs_since_improvement += 1
         print(f"Epochs since improvement: {epochs_since_improvement}")
@@ -451,6 +510,8 @@ def _train_single_model(config, model_type: str, device: torch.device, run_times
             'optimizer_state_dict': optimizer.state_dict(),
             'loss': epoch_loss,
             'epochs_since_improvement': epochs_since_improvement,
+            'select_metric': select_metric,
+            'best_score': best_score,
             'best_val_loss': best_val_loss,
             'config': config,
             'timestamp': run_timestamp,
@@ -584,6 +645,7 @@ def hybrid_train_pipeline(config_path: str, model_list: Optional[List[str]] = No
             'changed_unchanged_ratio': config.hybrid.changed_unchanged_ratio,
             'seed': config.hybrid.seed,
             'train_seed_base': train_seed_base,
+            'select_metric': str(getattr(config.training, 'select_metric', 'val_loss')),
             'num_epochs': config.training.num_epochs,
             'factor_list': config.data.factor_list,
             'batch_size': config.data.batch_size,
@@ -602,3 +664,109 @@ def hybrid_train_pipeline(config_path: str, model_list: Optional[List[str]] = No
         )
     except Exception as e:
         print(f"\n[error] 阈值扫描失败 (不影响已完成的模型训练): {e}")
+
+
+# ===== Manifest-based resume (HYBRID_RESUME=1) =====
+_MANIFEST_ROOT = os.path.join("results", "_manifests")
+
+
+def _manifest_path(branch_id: str, seed: int) -> str:
+    """按 (branch_id, seed) 哈希命名 manifest 文件, 隔离不同分支/seed 的状态."""
+    h = hashlib.md5(f"{branch_id}|{seed}".encode("utf-8")).hexdigest()[:8]
+    return os.path.join(_MANIFEST_ROOT, f"hybrid_{h}.json")
+
+
+def _load_manifest(path: str) -> dict:
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            print(f"[warn] manifest 损坏, 视为首跑: {path}")
+    return {}
+
+
+def _save_manifest_atomic(path: str, manifest: dict) -> None:
+    """原子写: 写临时文件后 os.replace 替换, 防 kill -9 中途截断."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+
+
+def _current_seed(config_path: str) -> int:
+    """统一取 train_seed: LU_TRAIN_SEED 环境变量优先, 否则取 config.hybrid.train_seed."""
+    cfg = get_yaml(config_path)
+    return int(os.environ.get("LU_TRAIN_SEED", getattr(cfg.hybrid, "train_seed", 0)))
+
+
+class _ResumeRunner:
+    """统一管理一个 (branch_id, seed) 下各 spec 的 manifest 续训.
+
+    所有 LIST 分支 + 默认分支共用; 新增 LIST 分支只需实例化本类并遍历.
+    用法:
+        runner = _ResumeRunner("transunet_list:...", seed)
+        for spec in specs:
+            resume_ts = runner.get(spec)
+            hybrid_train_pipeline(..., resume_timestamp=resume_ts)
+            runner.mark_done(spec)
+
+    开关:
+    - HYBRID_RESUME=1 启用 manifest 读写 (首跑也建 manifest, 重跑自动续)
+    - HYBRID_FORCE_RETRAIN=1 即使有条目也忽略, 生成新时间戳全新训练
+    不设 HYBRID_RESUME 时 get() 返回 None, 行为与改动前完全一致.
+    """
+
+    def __init__(self, branch_id: str, seed: int):
+        self.branch_id = branch_id
+        self.seed = seed
+        self.resume_on = os.environ.get("HYBRID_RESUME", "0") == "1"
+        self.force = os.environ.get("HYBRID_FORCE_RETRAIN", "0") == "1"
+        self.mpath = _manifest_path(branch_id, seed) if self.resume_on else None
+        self.manifest = _load_manifest(self.mpath) if self.resume_on else {}
+        if self.resume_on and not self.manifest:
+            self.manifest = {
+                "branch": branch_id,
+                "seed": seed,
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "entries": {},
+            }
+
+    def get(self, spec_sig: str):
+        """返回 resume_ts (str|None). resume 模式下解析/记录时间戳, 否则 None."""
+        if not self.resume_on:
+            return None
+        entry_key = f"seed_{self.seed}|{spec_sig}"
+        entry = self.manifest.get("entries", {}).get(entry_key, {})
+        if not self.force and entry.get("run_timestamp"):
+            run_ts = entry["run_timestamp"]   # 重跑: 复用已记录时间戳
+            mode = "skip/resume"
+        else:
+            run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")  # 首跑/强制重训
+            entry = {
+                "run_timestamp": run_ts,
+                "status": "in_progress",
+                "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "finished_at": None,
+            }
+            mode = "retrain" if self.force else "first-run"
+        self.manifest.setdefault("entries", {})[entry_key] = entry
+        _save_manifest_atomic(self.mpath, self.manifest)   # 立即落盘, 防 crash 丢失
+        print(f"[manifest] branch={self.branch_id} spec={spec_sig} "
+              f"-> run_timestamp={run_ts} ({mode})")
+        return run_ts
+
+    def mark_done(self, spec_sig: str):
+        if not self.resume_on:
+            return
+        entry_key = f"seed_{self.seed}|{spec_sig}"
+        entry = self.manifest.setdefault("entries", {}).setdefault(entry_key, {})
+        entry["status"] = "done"
+        entry["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _save_manifest_atomic(self.mpath, self.manifest)
