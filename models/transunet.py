@@ -14,6 +14,9 @@ from torch.nn import Dropout, Linear, Conv2d, LayerNorm
 from torch.nn.modules.utils import _pair
 
 from .attention import build_attention
+from .blocks import build_block, StdConv2d
+from .decoder_ops import build_upsample, build_conv, build_fusion, Conv2dReLU, HighResSkipProj
+from .fusion import FactorLUCroAttention
 
 
 class ConfigDict(dict):
@@ -61,60 +64,16 @@ ACT2FN = {"gelu": torch.nn.functional.gelu, "relu": torch.nn.functional.relu, "s
 
 # ---- ResNetV2 (hybrid encoder backbone) ----
 
-class StdConv2d(nn.Conv2d):
-    def forward(self, x):
-        w = self.weight
-        v, m = torch.var_mean(w, dim=[1, 2, 3], keepdim=True, unbiased=False)
-        w = (w - m) / torch.sqrt(v + 1e-5)
-        return F.conv2d(x, w, self.bias, self.stride, self.padding,
-                        self.dilation, self.groups)
-
-
-def conv3x3(cin, cout, stride=1, groups=1, bias=False):
-    return StdConv2d(cin, cout, kernel_size=3, stride=stride,
-                     padding=1, bias=bias, groups=groups)
-
-
-def conv1x1(cin, cout, stride=1, bias=False):
-    return StdConv2d(cin, cout, kernel_size=1, stride=stride,
-                     padding=0, bias=bias)
-
-
-class PreActBottleneck(nn.Module):
-    """Pre-activation (v2) bottleneck block."""
-    def __init__(self, cin, cout=None, cmid=None, stride=1):
-        super().__init__()
-        cout = cout or cin
-        cmid = cmid or cout // 4
-
-        self.gn1 = nn.GroupNorm(32, cmid, eps=1e-6)
-        self.conv1 = conv1x1(cin, cmid, bias=False)
-        self.gn2 = nn.GroupNorm(32, cmid, eps=1e-6)
-        self.conv2 = conv3x3(cmid, cmid, stride, bias=False)
-        self.gn3 = nn.GroupNorm(32, cout, eps=1e-6)
-        self.conv3 = conv1x1(cmid, cout, bias=False)
-        self.relu = nn.ReLU(inplace=True)
-
-        if (stride != 1 or cin != cout):
-            self.downsample = conv1x1(cin, cout, stride, bias=False)
-            self.gn_proj = nn.GroupNorm(cout, cout)
-
-    def forward(self, x):
-        residual = x
-        if hasattr(self, 'downsample'):
-            residual = self.downsample(x)
-            residual = self.gn_proj(residual)
-
-        y = self.relu(self.gn1(self.conv1(x)))
-        y = self.relu(self.gn2(self.conv2(y)))
-        y = self.gn3(self.conv3(y))
-        y = self.relu(residual + y)
-        return y
+# StdConv2d / conv3x3 / conv1x1 / PreActBottleneck 已迁至 models/blocks/preact.py (族三)
 
 
 class ResNetV2(nn.Module):
-    """Pre-activation (v2) ResNet, 16 倍下采样."""
-    def __init__(self, block_units, width_factor, in_channels=3):
+    """Pre-activation (v2) ResNet, 16 倍下采样.
+
+    block_type 为主干 block 开关 (preact 默认 / convnext), 见 models/blocks/。
+    """
+    def __init__(self, block_units, width_factor, in_channels=3, block_type="preact",
+                 high_res_skip=False):
         super().__init__()
         width = int(64 * width_factor)
         self.width = width
@@ -125,24 +84,29 @@ class ResNetV2(nn.Module):
             ('relu', nn.ReLU(inplace=True)),
         ]))
 
+        # 新增 3.1 / B1: 在 root 之前导出一路原分辨率浅层特征, 1×1 对齐 16 通道作末级 skip
+        self.high_res = HighResSkipProj(in_channels, 16) if high_res_skip else None
+
+        # 阶段单元由 block_type 开关决定 (见 models/blocks/), 默认 preact 与现状一致
         self.body = nn.Sequential(OrderedDict([
             ('block1', nn.Sequential(OrderedDict(
-                [('unit1', PreActBottleneck(cin=width, cout=width * 4, cmid=width))] +
-                [(f'unit{i:d}', PreActBottleneck(cin=width * 4, cout=width * 4, cmid=width)) for i in range(2, block_units[0] + 1)],
+                [('unit1', build_block(block_type, width, width * 4, width))] +
+                [(f'unit{i:d}', build_block(block_type, width * 4, width * 4, width)) for i in range(2, block_units[0] + 1)],
             ))),
             ('block2', nn.Sequential(OrderedDict(
-                [('unit1', PreActBottleneck(cin=width * 4, cout=width * 8, cmid=width * 2, stride=2))] +
-                [(f'unit{i:d}', PreActBottleneck(cin=width * 8, cout=width * 8, cmid=width * 2)) for i in range(2, block_units[1] + 1)],
+                [('unit1', build_block(block_type, width * 4, width * 8, width * 2, stride=2))] +
+                [(f'unit{i:d}', build_block(block_type, width * 8, width * 8, width * 2)) for i in range(2, block_units[1] + 1)],
             ))),
             ('block3', nn.Sequential(OrderedDict(
-                [('unit1', PreActBottleneck(cin=width * 8, cout=width * 16, cmid=width * 4, stride=2))] +
-                [(f'unit{i:d}', PreActBottleneck(cin=width * 16, cout=width * 16, cmid=width * 4)) for i in range(2, block_units[2] + 1)],
+                [('unit1', build_block(block_type, width * 8, width * 16, width * 4, stride=2))] +
+                [(f'unit{i:d}', build_block(block_type, width * 16, width * 16, width * 4)) for i in range(2, block_units[2] + 1)],
             ))),
         ]))
 
     def forward(self, x):
         features = []
         b, c, in_size, _ = x.size()
+        high_res = self.high_res(x) if self.high_res is not None else None
         x = self.root(x)
         features.append(x)
         x = nn.MaxPool2d(kernel_size=3, stride=2, padding=0)(x)
@@ -158,7 +122,11 @@ class ResNetV2(nn.Module):
                 feat = x
             features.append(feat)
         x = self.body[-1](x)
-        return x, features[::-1]
+        features = features[::-1]
+        if high_res is not None:
+            # 新增 3.1 / B1: 末级 skip 追加在列表尾部 (对应 skip_channels[3] = 16)
+            features.append(high_res)
+        return x, features
 
 
 # ---- ViT (transformer encoder) ----
@@ -209,7 +177,9 @@ class Embeddings(nn.Module):
         if self.hybrid:
             self.hybrid_model = ResNetV2(block_units=config.resnet.num_layers,
                                          width_factor=config.resnet.width_factor,
-                                         in_channels=in_channels)
+                                         in_channels=in_channels,
+                                         block_type=getattr(config, "resblock_type", "preact"),
+                                         high_res_skip=getattr(config, "high_res_skip", False))
             in_channels = self.hybrid_model.width * 16
 
         self.patch_embeddings = Conv2d(in_channels=in_channels,
@@ -297,39 +267,32 @@ class Transformer(nn.Module):
 
 # ---- Decoder ----
 
-class Conv2dReLU(nn.Sequential):
-    def __init__(self, in_channels, out_channels, kernel_size, padding=0, stride=1, use_batchnorm=True):
-        conv = nn.Conv2d(
-            in_channels,
-            out_channels,
-            kernel_size,
-            stride=stride,
-            padding=padding,
-            bias=not (use_batchnorm),
-        )
-        relu = nn.ReLU(inplace=True)
-        bn = nn.BatchNorm2d(out_channels)
-        super(Conv2dReLU, self).__init__(conv, bn, relu)
-
-
 class DecoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, skip_channels=0, use_batchnorm=True):
+    def __init__(self, in_channels, out_channels, skip_channels=0, use_batchnorm=True,
+                 up_type="bilinear", conv_type="conv2drelu", level=None):
         super().__init__()
-        self.conv1 = Conv2dReLU(
+        # 卷积块由 conv_type 开关决定 (见 models/decoder_ops/), 默认 conv2drelu 与现状一致;
+        # level 为 decoder 级索引, 供 large_kernel 按级选取核尺寸
+        self.conv1 = build_conv(
+            conv_type,
             in_channels + skip_channels,
             out_channels,
             kernel_size=3,
             padding=1,
             use_batchnorm=use_batchnorm,
+            level=level,
         )
-        self.conv2 = Conv2dReLU(
+        self.conv2 = build_conv(
+            conv_type,
             out_channels,
             out_channels,
             kernel_size=3,
             padding=1,
             use_batchnorm=use_batchnorm,
+            level=level,
         )
-        self.up = nn.UpsamplingBilinear2d(scale_factor=2)
+        # 上采样算子由 up_type 开关决定, 默认 bilinear 等价 nn.UpsamplingBilinear2d(scale_factor=2)
+        self.up = build_upsample(up_type, in_channels, scale=2)
 
     def forward(self, x, skip=None):
         x = self.up(x)
@@ -351,6 +314,13 @@ class DecoderCup(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        # decoder 可插拔算子开关 (见 models/decoder_ops/); 默认项与官方 TransUNet 等价
+        up_type = getattr(config, "up_type", "bilinear")
+        conv_type = getattr(config, "conv_type", "conv2drelu")
+        fusion_type = getattr(config, "fusion_type", "concat")
+        # 新增 3.4: 并联局部算子 (在既有 3×3 卷积旁并联大核局部支路)
+        if getattr(config, "parallel_local", False):
+            conv_type = "parallel_local"
         head_channels = 512
         self.conv_more = Conv2dReLU(
             config.hidden_size,
@@ -368,11 +338,22 @@ class DecoderCup(nn.Module):
                 skip_channels[3 - i] = 0
         else:
             skip_channels = [0, 0, 0, 0]
+        # 新增 3.2: up_type=carafe 时仅末级并联 CARAFE, 其余级保持 bilinear
+        n_blocks = len(in_channels)
+        block_up_types = [up_type] * n_blocks
+        if up_type == "carafe":
+            block_up_types = ["bilinear"] * (n_blocks - 1) + ["carafe"]
         blocks = [
-            DecoderBlock(in_ch, out_ch, sk_ch)
-            for in_ch, out_ch, sk_ch in zip(in_channels, out_channels, skip_channels)
+            DecoderBlock(in_ch, out_ch, sk_ch, up_type=block_up_types[i],
+                         conv_type=conv_type, level=i)
+            for i, (in_ch, out_ch, sk_ch) in enumerate(
+                zip(in_channels, out_channels, skip_channels))
         ]
         self.blocks = nn.ModuleList(blocks)
+        # 多分辨率融合算子 (默认 concat 为占位, 不改变逐级 skip 行为)
+        used_skip_channels = [c for c in skip_channels if c != 0]
+        self.fusion = build_fusion(fusion_type, levels=len(blocks),
+                                   channels=used_skip_channels)
 
     def forward(self, hidden_states, features=None):
         B, n_patch, hidden = hidden_states.size()
@@ -380,6 +361,9 @@ class DecoderCup(nn.Module):
         x = hidden_states.permute(0, 2, 1)
         x = x.contiguous().view(B, hidden, h, w)
         x = self.conv_more(x)
+        if features is not None:
+            # 多分辨率融合 (默认 concat 原样返回; 跨尺度交互在新增 3.3 接入)
+            features = self.fusion(features)
         for i, decoder_block in enumerate(self.blocks):
             if features is not None:
                 skip = features[i] if (i < self.config.n_skip) else None
@@ -390,12 +374,19 @@ class DecoderCup(nn.Module):
 
 
 class VisionTransformer(nn.Module):
-    def __init__(self, config, img_size=224, num_classes=21843, zero_head=False, vis=False, in_channels=3):
+    def __init__(self, config, img_size=224, num_classes=21843, zero_head=False, vis=False, in_channels=3,
+                 use_m1=False):
         super(VisionTransformer, self).__init__()
         self.num_classes = num_classes
         self.zero_head = zero_head
         self.classifier = config.classifier
         self.transformer = Transformer(config, img_size, vis, in_channels=in_channels)
+        # M1: 编码器输出端驱动因子×LU 交叉注意力 (decoder 之前并联接入)
+        self.m1 = FactorLUCroAttention(
+            dim=config.hidden_size,
+            num_heads=config.transformer["num_heads"],
+            dropout=config.transformer["attention_dropout_rate"],
+        ) if use_m1 else None
         self.decoder = DecoderCup(config)
         self.segmentation_head = SegmentationHead(
             in_channels=config['decoder_channels'][-1],
@@ -408,6 +399,8 @@ class VisionTransformer(nn.Module):
         if x.size()[1] == 1:
             x = x.repeat(1, 3, 1, 1)
         x, attn_weights, features = self.transformer(x)  # (B, n_patch, hidden)
+        if self.m1 is not None:
+            x = self.m1(x)
         x = self.decoder(x, features)
         logits = self.segmentation_head(x)
         return logits
@@ -428,9 +421,18 @@ class TransUNet(nn.Module):
 
     attn_type 为编码器注意力模块开关 (vanilla / agent / swinv2), 见 models/attention/;
     attn_kwargs 为所选模块的专属超参 (如 agent 的 num_agent)。
+    up_type / conv_type / fusion_type 为 decoder 可插拔算子开关 (bilinear | dysample | carafe /
+    conv2drelu | large_kernel | parallel_local / concat | cross_scale), 见 models/decoder_ops/;
+    resblock_type 为 R50 主干 block 开关 (preact | convnext), 见 models/blocks/;
+    parallel_local (新增 3.4) 与 high_res_skip / n_skip (新增 3.1 / B1) 为新增类开关;
+    use_m1 为编码器输出端信息交互开关, 见 models/fusion/。
     """
     def __init__(self, in_channels: int = 3, class_num: int = 1, img_size: int = 224,
-                 attn_type: str = "vanilla", attn_kwargs=None):
+                 attn_type: str = "vanilla", attn_kwargs=None, use_m1: bool = False,
+                 up_type: str = "bilinear", conv_type: str = "conv2drelu",
+                 fusion_type: str = "concat", resblock_type: str = "preact",
+                 parallel_local: bool = False, high_res_skip: bool = False,
+                 n_skip: int = 3):
         super().__init__()
         config = get_r50_b16_config()
         config.n_classes = class_num
@@ -439,10 +441,22 @@ class TransUNet(nn.Module):
         config.attn_kwargs = _normalize_attn_kwargs(attn_kwargs)
         # 混合编码器对输入做 16 倍下采样, 故 token 网格边长为 img_size // 16
         config.attn_grid_size = img_size // 16
+        # decoder 可插拔算子开关 (见 models/decoder_ops/)
+        config.up_type = up_type
+        config.conv_type = conv_type
+        config.fusion_type = fusion_type
+        # R50 主干 block 开关 (见 models/blocks/)
+        config.resblock_type = resblock_type
+        # 新增类开关 (新增 3.4 / 3.1)
+        config.parallel_local = parallel_local
+        config.high_res_skip = high_res_skip
+        # B1 高分辨率注入需要 4 级 skip; 开启时自动提升, 避免高分辨率特征被静默丢弃
+        config.n_skip = 4 if (high_res_skip and n_skip < 4) else n_skip
         self.vit = VisionTransformer(config, img_size=img_size,
                                      num_classes=class_num,
                                      zero_head=False, vis=False,
-                                     in_channels=in_channels)
+                                     in_channels=in_channels,
+                                     use_m1=use_m1)
 
     def forward(self, x):
         return self.vit(x)
