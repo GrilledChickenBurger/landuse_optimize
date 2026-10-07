@@ -108,7 +108,8 @@ def load_tiff(file_path: str) -> np.ndarray:
             # print(f"✓ GDAL成功读取: {file_path}")
             return tif_array
     except ImportError:
-        print("警告: GDAL不可用，将尝试使用rasterio")
+        pass
+        # print("警告: GDAL不可用，将尝试使用rasterio")
     except Exception as e:
         print(f"GDAL读取失败 {file_path}: {e}")
     
@@ -117,7 +118,7 @@ def load_tiff(file_path: str) -> np.ndarray:
         import rasterio
         with rasterio.open(file_path) as src:
             tif_array = src.read(1)
-            print(f"✓ rasterio成功读取: {file_path}")
+            # print(f"✓ rasterio成功读取: {file_path}")
             return tif_array
     except Exception as e:
         print(f"rasterio读取失败 {file_path}: {e}")
