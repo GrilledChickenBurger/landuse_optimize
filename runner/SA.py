@@ -9,7 +9,7 @@ import torch
 import numpy as np
 from libs.const import *
 import libs.const as _libs_const
-from generator.sa_generator import generate_new_plan
+from generator.sa_generator import generate_new_plan, build_valid_anchor_sets
 from calculator.tgt_function_cal import cal_tgt_function, compute_lambdas
 import utils.calculator_utils as cUtils
 import utils.runner_utils as rUtils
@@ -140,6 +140,15 @@ class SimulatedAnnealing:
         self.pred_diff_pixelnum = torch.count_nonzero(
             torch.logical_and(ra_mask, self.pred_diff)).item()
         self.scale_minmax_dict = rUtils.get_scale_minmax_dict(self.pred_diff_pixelnum)
+
+        # 受控采样: 合法锚点集(零重试) + 每温度层 Markov 链长度
+        self.chain_length = getattr(config, 'chain_length', 1)
+        self.valid_sample_prob = getattr(common_config, 'valid_sample_prob', 0.0)
+        if self.valid_sample_prob > 0:
+            self.valid_anchor_sets, self.valid_integral = build_valid_anchor_sets(
+                self.ori_plan, self.hard_restrict, self.scale_minmax_dict)
+        else:
+            self.valid_anchor_sets, self.valid_integral = None, None
 
         # 目标函数计算相关信息: distance map 基于 change_target 生成
         self.pred_diff_distance_map = cUtils.get_pred_diff_distance_map(self.change_target)
@@ -274,77 +283,94 @@ class SimulatedAnnealing:
         result_folder = os.path.join(self.save_path, self.index)
         tUtils.ensure_folder(result_folder)
         
-        # 模拟退火主循环
-        while cur_temp > self.t_end:
-            # 生成新解
-            new_plan, d_diff = generate_new_plan(cur_plan, 
-                                        self.ori_plan,
-                                        T_ratio = cur_temp / self.t_0,
-                                        noimprove_step=noimprove_iter,
-                                        scale_minmax_dict=self.scale_minmax_dict,
-                                        lu_labels=self.lu_labels,
-                                        hard_restrict=self.hard_restrict,
-                                        cls_restrict=self.cls_restrict)
-            
-            # 计算新解的分数
-            new_diff = torch.tensor(new_plan != self.ori_plan, dtype=torch.float32)
-            new_score_list = cal_tgt_function(new_plan, new_diff,
-                                            self.change_target,
+        # 模拟退火主循环: 外层温度层, 内层每层 chain_length 步 (标准 SA Markov 链)
+        early_stop = False
+        while cur_temp > self.t_end and not early_stop:
+            for _ in range(self.chain_length):
+                # 生成新解
+                new_plan, d_diff = generate_new_plan(cur_plan,
                                             self.ori_plan,
-                                            self.info_dict,
-                                            self.es_weight_dict,
-                                            self.use_landscape,
-                                            score_cfg=self.score_cfg,
-                                            change_scale_n=self.pred_diff_pixelnum,
-                                            lambda_ES=self.lambda_ES,
-                                            lambda_LS=self.lambda_LS)
-            
-            # 评估新解
-            prev_score = cur_score_list[0]
-            cur_plan, cur_diff, cur_score_list, is_accepted = self.evaluate_new_plan(
-                                        new_plan, new_diff, new_score_list, 
-                                        cur_plan, cur_diff, cur_score_list, 
-                                        cur_temp)
-            # 更新迭代次数计数器
-            noimprove_iter = noimprove_iter + 1 if prev_score <= cur_score_list[0] else 0
-            # 更新当前分数
-            cur_score = cur_score_list[0]
-            # 更新记录目标函数项的列表
-            self.update_score_lists(cur_score_list)
-            
-            # 更新全局最优解（最小化问题）
-            if cur_score < self.best_score:
-                self.best_plan = cur_plan.clone()
-                self.best_score = cur_score
-                self.best_score_iter = iteration  # 更新最优解出现的迭代代数
-                print(f"============ step {iteration}: New best score = {self.best_score:.4f} ==============")
-            
-            # 是否提前终止？
-            if noimprove_iter >= self.max_noimprove_iter or \
-                    iteration - self.best_score_iter >= self.max_beststuck_iter:
-                print(f"SA提前终止，未改进连续{self.max_noimprove_iter}step 或 最优解停滞{self.max_beststuck_iter}step。")
-                break
+                                            T_ratio = cur_temp / self.t_0,
+                                            noimprove_step=noimprove_iter,
+                                            scale_minmax_dict=self.scale_minmax_dict,
+                                            lu_labels=self.lu_labels,
+                                            hard_restrict=self.hard_restrict,
+                                            cls_restrict=self.cls_restrict,
+                                            valid_anchors=self.valid_anchor_sets,
+                                            valid_integral=self.valid_integral,
+                                            valid_prob=self.valid_sample_prob)
 
-            # 打印进度
-            if iteration % self.print_frequency == 0:
-                print(f"\nStep {iteration} noimprove_iter: {noimprove_iter} beststuck_iter: {self.best_score_iter}")
-                print(f"        温度: {cur_temp:.4f}, 当前分数={cur_score:.4f}, 最佳分数={self.best_score:.4f}")
-            
-            if iteration % self.visualize_frequency == 0:
-                print(f"        change_score={cur_score_list[1]:.4f}, ES_score={cur_score_list[2]:.4f}, landscape_score={cur_score_list[-1]:.4f}.")
-                tensor_dict = {
-                    'ori_plan': self.ori_plan,
-                    'cur_plan': cur_plan,
-                    'pred_diff': self.pred_diff,
-                    'cur_diff': cur_diff,
-                }
-                tUtils.visualize_tensor_list(tensor_dict, self.text,
-                                            save_path=os.path.join(result_folder, 'history', f'iter_{iteration}.png'),
-                                            figsize=(20, 6),
-                                            color_map=COLOR_MAP)
-            # 降温
+                # 空 move: 提议不可行, 视为被拒绝, 不评估目标函数
+                if not d_diff.any():
+                    noimprove_iter += 1
+                    iteration += 1
+                    if noimprove_iter >= self.max_noimprove_iter or \
+                            iteration - self.best_score_iter >= self.max_beststuck_iter:
+                        print(f"SA提前终止，未改进连续{self.max_noimprove_iter}step 或 最优解停滞{self.max_beststuck_iter}step。")
+                        early_stop = True
+                        break
+                    continue
+
+                # 计算新解的分数
+                new_diff = torch.tensor(new_plan != self.ori_plan, dtype=torch.float32)
+                new_score_list = cal_tgt_function(new_plan, new_diff,
+                                                self.change_target,
+                                                self.ori_plan,
+                                                self.info_dict,
+                                                self.es_weight_dict,
+                                                self.use_landscape,
+                                                score_cfg=self.score_cfg,
+                                                change_scale_n=self.pred_diff_pixelnum,
+                                                lambda_ES=self.lambda_ES,
+                                                lambda_LS=self.lambda_LS)
+
+                # 评估新解
+                prev_score = cur_score_list[0]
+                cur_plan, cur_diff, cur_score_list, is_accepted = self.evaluate_new_plan(
+                                            new_plan, new_diff, new_score_list,
+                                            cur_plan, cur_diff, cur_score_list,
+                                            cur_temp)
+                # 更新迭代次数计数器
+                noimprove_iter = noimprove_iter + 1 if prev_score <= cur_score_list[0] else 0
+                # 更新当前分数
+                cur_score = cur_score_list[0]
+                # 更新记录目标函数项的列表
+                self.update_score_lists(cur_score_list)
+
+                # 更新全局最优解（最小化问题）
+                if cur_score < self.best_score:
+                    self.best_plan = cur_plan.clone()
+                    self.best_score = cur_score
+                    self.best_score_iter = iteration  # 更新最优解出现的迭代代数
+                    print(f"============ step {iteration}: New best score = {self.best_score:.4f} ==============")
+
+                # 是否提前终止？
+                if noimprove_iter >= self.max_noimprove_iter or \
+                        iteration - self.best_score_iter >= self.max_beststuck_iter:
+                    print(f"SA提前终止，未改进连续{self.max_noimprove_iter}step 或 最优解停滞{self.max_beststuck_iter}step。")
+                    early_stop = True
+                    break
+
+                # 打印进度
+                if iteration % self.print_frequency == 0:
+                    print(f"\nStep {iteration} noimprove_iter: {noimprove_iter} beststuck_iter: {self.best_score_iter}")
+                    print(f"        温度: {cur_temp:.4f}, 当前分数={cur_score:.4f}, 最佳分数={self.best_score:.4f}")
+
+                if iteration % self.visualize_frequency == 0:
+                    print(f"        change_score={cur_score_list[1]:.4f}, ES_score={cur_score_list[2]:.4f}, landscape_score={cur_score_list[-1]:.4f}.")
+                    tensor_dict = {
+                        'ori_plan': self.ori_plan,
+                        'cur_plan': cur_plan,
+                        'pred_diff': self.pred_diff,
+                        'cur_diff': cur_diff,
+                    }
+                    tUtils.visualize_tensor_list(tensor_dict, self.text,
+                                                save_path=os.path.join(result_folder, 'history', f'iter_{iteration}.png'),
+                                                figsize=(20, 6),
+                                                color_map=COLOR_MAP)
+                iteration += 1
+            # 降温: 每个温度层跑完 chain_length 步后下降
             cur_temp *= self.cooling_rate
-            iteration += 1
         
         print(f"\n随机优化结束! 最佳分数: {self.best_score:.4f}")
 

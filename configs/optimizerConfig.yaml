@@ -97,12 +97,14 @@ runner: # 随机优化算法通用参数
     carbon_pool_path: "libs/carbon_pool.csv" # 碳库数据路径
     maxent_model_path: "checkpoints/maxent-model_sklearn_{year}.ela" # maxent模型路径, 需与data.maxent_model_path一致
     frg_model_path: "libs/frg_model.fca" # 破碎化模型路径
+    valid_sample_prob: 0.8 # 受控采样: 以 p 在有效区域内生成矩形(必中), 1-p 全图单次采样(不合法则空 move)
     maxent_list: ["CITY", "DL", "LU", "PODU", "WATER"] # Maxent模型输入变量
 
 SA: # 模拟退火参数
   T_start: 100 # 初始温度
   T_end: 0.1 # 终止温度
   cooling_rate: 0.9995 # 降温率
+  chain_length: 10 # 标准 SA: 每个温度层的 Markov 链长度(内循环步数)
   max_noimprove_iter: 1000 # 最大无改进迭代次数
   max_beststuck_iter: 3000 # 最优解停滞阈值
 

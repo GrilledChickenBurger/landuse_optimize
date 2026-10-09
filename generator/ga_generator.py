@@ -13,7 +13,10 @@ def initial_new_population(
         scale_minmax_dict:Dict, 
         lu_labels:List,
         cls_restrict:bool, 
-        hard_restrict:bool) -> List[torch.Tensor]:
+        hard_restrict:bool,
+        valid_anchors:Dict = None,
+        valid_integral:torch.Tensor = None,
+        valid_prob:float = 0.0) -> List[torch.Tensor]:
     """
     在当前方案的基础上生成一组新的方案，作为遗传算法的初始种群.
     新方案的生成方式同SA的`generate_new_plan`函数，.
@@ -32,7 +35,11 @@ def initial_new_population(
         cls_restrict: tensor, [1,128,128], 0-1,
             类别约束: 51 53类别无法修改为非5类别
         hard_restrict: tensor, [1,128,128], 0-1
-            硬约束: 1表示可以修改的区域       
+            硬约束: 1表示可以修改的区域
+        valid_anchors: Dict[str, tensor], optional, 各尺度合法锚点集,
+            None 时走旧的拒绝采样路径
+        valid_integral: tensor, optional, [H+1, W+1] 有效区域积分图
+        valid_prob: float, 从合法锚点集采样的概率
     
     Returns:
     --------
@@ -64,7 +71,10 @@ def initial_new_population(
                 scale_minmax_dict=scale_minmax_dict, 
                 lu_labels=lu_labels,
                 cls_restrict=cls_restrict, 
-                hard_restrict=hard_restrict
+                hard_restrict=hard_restrict,
+                valid_anchors=valid_anchors,
+                valid_integral=valid_integral,
+                valid_prob=valid_prob
             )
             new_plan_list.append(new_plan)
         print(f"Init: Generated {num} {scale_type}-wise plans.")

@@ -295,7 +295,14 @@ def plot_model_comparison_bar(json_path: str = "model_comparison_data.json",
 
     models = cmp_data["models"]
     metrics = cmp_data["metrics"]
+    # 按 F1 从大到小重排模型, 各指标数组同步调整顺序
+    order = sorted(range(len(models)), key=lambda i: metrics["F1"][i], reverse=True)
+    models = [models[i] for i in order]
+    metrics = {name: [vals[i] for i in order] for name, vals in metrics.items()}
     metric_names = list(metrics.keys())
+    # 柱顶数值与图例字号从 paper 基准(23/24)下调, 避免过大压盖/超宽
+    annot_prop = FONT['prop'](16)
+    legend_prop = FONT['prop'](16)
     green_shades = plt.cm.Greens(np.linspace(0.85, 0.35, len(models)))
     bar_width = 0.80
     offsets = np.linspace(
@@ -304,7 +311,7 @@ def plot_model_comparison_bar(json_path: str = "model_comparison_data.json",
         len(models))
     single_bar_width = bar_width / len(models) * 0.92
 
-    fig, ax = plt.subplots(figsize=(12, 5))
+    fig, ax = plt.subplots(figsize=(14.4, 6))
     for i, metric_name in enumerate(metric_names):
         values = metrics[metric_name]
         for k, model_name in enumerate(models):
@@ -314,19 +321,19 @@ def plot_model_comparison_bar(json_path: str = "model_comparison_data.json",
                    color=green_shades[k], alpha=0.85,
                    edgecolor='white', linewidth=0.5)
             ax.text(x_pos, val + 0.005, f"{val:.4f}",
-                    ha='center', va='bottom', fontproperties=FONT['annot'])
+                    ha='center', va='bottom', fontproperties=annot_prop)
 
     ax.set_xticks(range(len(metric_names)))
     ax.set_xticklabels(metric_names, fontproperties=FONT['tick'])
-    ax.set_ylim(0, 1.06)
+    ax.margins(y=0.10)  # Y 轴自适应, 顶部留白避免柱顶数值被裁剪
     ax.set_ylabel("得分", fontproperties=FONT['label'])
     ax.grid(True, alpha=0.5, axis='y', color='gray', linestyle='--')
     ax.set_axisbelow(True)
     ax.legend(
         handles=[Patch(facecolor=green_shades[k], alpha=0.85, edgecolor='white', label=models[k])
                  for k in range(len(models))],
-        loc='upper center', bbox_to_anchor=(0.5, -0.08), ncol=4,
-        prop=FONT['legend'], frameon=False)
+        loc='upper center', bbox_to_anchor=(0.5, -0.08), ncol=5,
+        prop=legend_prop, frameon=False)
 
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, save_name)

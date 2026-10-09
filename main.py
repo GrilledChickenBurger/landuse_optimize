@@ -1,5 +1,7 @@
 import os
 import sys
+import time
+from datetime import datetime
 
 # 容器里 nproc 常远大于实际 CPU 配额(如 128 vs 16), torch/numpy 默认按 nproc 开线程会造成
 # OpenMP 忙等自旋抢满配额并饿住 GPU; 该现象只出现在 Linux 容器, 本机核数=配额则无需封顶.
@@ -81,9 +83,9 @@ def run_train_pipeline():
 def run_valid_pipeline():
     config_path = os.path.join("configs","trainConfig.yaml")
     # model_checkpoint_path = os.path.join("checkpoints","attunet","20260212_045750","best_model.pth")
-    # model_checkpoint_path = os.path.join("checkpoints","unet","20260212_155606","best_model.pth")
+    model_checkpoint_path = os.path.join("checkpoints","unet","20260212_155606","best_model.pth")
     # model_checkpoint_path = os.path.join("checkpoints","segformer","20260213_062110","best_model.pth")
-    model_checkpoint_path = os.path.join("checkpoints","transunet","20260214_052453","best_model.pth")
+    # model_checkpoint_path = os.path.join("checkpoints","transunet","20260214_052453","best_model.pth")
 
     valid_pipeline(config_path, model_checkpoint_path, only_changed=False, datasets=["val"])
 
@@ -240,10 +242,10 @@ def run_tornado_plots_pipeline(experiment_root: str = None,
 def run_results_analysis_pipeline():
     sa_expr_path = "SA\\20260301_101241"
     ga_expr_path = "GA\\20260305_120735"
-    single_experiment_stat_pipeline(ga_expr_path)
-    sample_visualization_pipeline(ga_expr_path, mode="picked")
+    # single_experiment_stat_pipeline(ga_expr_path)
+    # sample_visualization_pipeline(ga_expr_path, mode="picked")
     comparison_pipeline(sa_expr_path, ga_expr_path)
-    model_comparison_pipeline()
+    # model_comparison_pipeline()
 
 if __name__ == "__main__":
     # pass

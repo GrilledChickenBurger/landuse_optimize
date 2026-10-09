@@ -11,6 +11,7 @@ import numpy as np
 from libs.const import *
 import libs.const as _libs_const
 from generator.ga_generator import initial_new_population, crossover, mutate
+from generator.sa_generator import build_valid_anchor_sets
 from calculator.tgt_function_cal import cal_tgt_function, compute_lambdas
 import utils.calculator_utils as cUtils
 import utils.runner_utils as rUtils
@@ -370,6 +371,14 @@ class GeneticAlgorithm:
             torch.logical_and(ra_mask, self.pred_diff)).item()
         self.scale_minmax_dict = rUtils.get_scale_minmax_dict(self.pred_diff_pixelnum)
 
+        # 受控采样: 合法锚点集(零重试), 与 SA 共用
+        self.valid_sample_prob = getattr(common_config, 'valid_sample_prob', 0.0)
+        if self.valid_sample_prob > 0:
+            self.valid_anchor_sets, self.valid_integral = build_valid_anchor_sets(
+                self.ori_plan, self.hard_restrict, self.scale_minmax_dict)
+        else:
+            self.valid_anchor_sets, self.valid_integral = None, None
+
         # 目标函数计算相关信息: distance map 基于 change_target 生成
         self.pred_diff_distance_map = cUtils.get_pred_diff_distance_map(self.change_target)
         self.info_dict = cUtils.get_info_dict(
@@ -400,7 +409,10 @@ class GeneticAlgorithm:
                                 self.scale_minmax_dict, 
                                 self.lu_labels, 
                                 self.cls_restrict, 
-                                self.hard_restrict)
+                                self.hard_restrict,
+                                valid_anchors=self.valid_anchor_sets,
+                                valid_integral=self.valid_integral,
+                                valid_prob=self.valid_sample_prob)
         self.pop_size_interpolator = tUtils.PiecewiseLinear(
                                     [0.2, 0.9], 
                                     [self.ori_pop_size, self.final_pop_size])
@@ -466,7 +478,10 @@ class GeneticAlgorithm:
                     scale_minmax_dict=self.scale_minmax_dict,
                     lu_labels=self.lu_labels,
                     cls_restrict=self.cls_restrict,
-                    hard_restrict=self.hard_restrict
+                    hard_restrict=self.hard_restrict,
+                    valid_anchors=self.valid_anchor_sets,
+                    valid_integral=self.valid_integral,
+                    valid_prob=self.valid_sample_prob
                 )
             else:
                 return individual.clone()
