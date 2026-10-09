@@ -13,6 +13,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .det_grid_sample import deterministic_grid_sample
+
 
 def normal_init(module, mean=0, std=1, bias=0):
     if hasattr(module, 'weight') and module.weight is not None:
@@ -69,8 +71,8 @@ class DySampleUpsample(nn.Module):
         coords = 2 * (coords + offset) / normalizer - 1
         coords = F.pixel_shuffle(coords.view(B, -1, H, W), self.scale).view(
             B, 2, -1, self.scale * H, self.scale * W).permute(0, 2, 3, 4, 1).contiguous().flatten(0, 1)
-        return F.grid_sample(x.reshape(B * self.groups, -1, H, W), coords, mode='bilinear',
-                             align_corners=False, padding_mode="border").view(
+        return deterministic_grid_sample(
+            x.reshape(B * self.groups, -1, H, W), coords).view(
             B, -1, self.scale * H, self.scale * W)
 
     def forward_lp(self, x):
