@@ -172,6 +172,9 @@ class SimulatedAnnealing:
         self.best_plan = self.ori_plan
         self.best_score = float('inf') # 初始化为无穷大，因为是最小化问题
         self.best_score_iter = 0  # 最优解出现的迭代代数
+        # 最优解出现时在 es_score_list 中的下标. es_score_list 只记录非空(已评估)move,
+        # 与全局迭代计数 best_score_iter 不同, 空 move 多时会越界, 故单独记录该下标.
+        self.best_score_eval_idx = 0
 
         # text, charts, logs
         self.total_score_list = []
@@ -342,6 +345,7 @@ class SimulatedAnnealing:
                     self.best_plan = cur_plan.clone()
                     self.best_score = cur_score
                     self.best_score_iter = iteration  # 更新最优解出现的迭代代数
+                    self.best_score_eval_idx = len(self.es_score_list) - 1  # 当前最优对应的已评估move下标
                     print(f"============ step {iteration}: New best score = {self.best_score:.4f} ==============")
 
                 # 是否提前终止？
@@ -465,9 +469,11 @@ class SimulatedAnnealing:
             target = best * 1.05
         iter_to_95pct = int(np.argmax(score_arr <= target)) if (score_arr <= target).any() else -1
 
-        # 取最优解出现时的 ES score (已保存在 es_score_list 中), 供原始记录表使用
-        es_score = (float(self.es_score_list[self.best_score_iter])
-                    if self.es_score_list else float('nan'))
+        # 取最优解出现时的 ES score (已保存在 es_score_list 中), 供原始记录表使用.
+        # 用 best_score_eval_idx(按已评估move计) 而非 best_score_iter(含空move的全局计数),
+        # 避免空 move 较多时下标越界.
+        es_score = (float(self.es_score_list[self.best_score_eval_idx])
+                    if 0 <= self.best_score_eval_idx < len(self.es_score_list) else float('nan'))
 
         conv = {
             'iter_to_95pct': iter_to_95pct,
