@@ -307,7 +307,8 @@ def calculate_culture_service(plan: torch.Tensor, maxent_list: List[str], maxent
     plan_np = convert_to_nparray(plan)
     nodata_idx = (plan_np == nodata).squeeze(axis=0)    # 1,128,128
     nodata_idx_expand = np.repeat(nodata_idx, len(maxent_list), axis=0) # n,128,128
-    pred = ela.apply_model_to_array(maxent_model, raster_arrays_np, nodata, nodata_idx_expand)    # 1,128,128
+    from utils.train_maxent import apply_model_to_array  # elapid 1.0 无该接口, 用本地等价实现
+    pred = apply_model_to_array(maxent_model, raster_arrays_np, nodata, nodata_idx_expand)    # 1,128,128
 
     # utils.show_array_result(pred.squeeze(axis=0), 'FJMS suitability', 'relative occurrence probability')
 
