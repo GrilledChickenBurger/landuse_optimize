@@ -305,6 +305,10 @@ class SimulatedAnnealing:
 
                 # 空 move: 提议不可行, 视为被拒绝, 不评估目标函数
                 if not d_diff.any():
+                    # 空 move 不改变状态, 但仍按频率记录进度/可视化;
+                    # 否则大量空 move 会跳过整点(iteration%freq==0), 导致 history 缺失
+                    self._log_progress(iteration, cur_temp, cur_score, cur_score_list,
+                                       noimprove_iter, cur_plan, cur_diff, result_folder)
                     noimprove_iter += 1
                     iteration += 1
                     if noimprove_iter >= self.max_noimprove_iter or \
@@ -355,23 +359,9 @@ class SimulatedAnnealing:
                     early_stop = True
                     break
 
-                # 打印进度
-                if iteration % self.print_frequency == 0:
-                    print(f"\nStep {iteration} noimprove_iter: {noimprove_iter} beststuck_iter: {self.best_score_iter}")
-                    print(f"        温度: {cur_temp:.4f}, 当前分数={cur_score:.4f}, 最佳分数={self.best_score:.4f}")
-
-                if iteration % self.visualize_frequency == 0:
-                    print(f"        change_score={cur_score_list[1]:.4f}, ES_score={cur_score_list[2]:.4f}, landscape_score={cur_score_list[-1]:.4f}.")
-                    tensor_dict = {
-                        'ori_plan': self.ori_plan,
-                        'cur_plan': cur_plan,
-                        'pred_diff': self.pred_diff,
-                        'cur_diff': cur_diff,
-                    }
-                    tUtils.visualize_tensor_list(tensor_dict, self.text,
-                                                save_path=os.path.join(result_folder, 'history', f'iter_{iteration}.png'),
-                                                figsize=(20, 6),
-                                                color_map=COLOR_MAP)
+                # 打印进度 + 可视化 (抽成方法, 空 move 分支也会调用)
+                self._log_progress(iteration, cur_temp, cur_score, cur_score_list,
+                                   noimprove_iter, cur_plan, cur_diff, result_folder)
                 iteration += 1
             # 降温: 每个温度层跑完 chain_length 步后下降
             cur_temp *= self.cooling_rate
@@ -418,6 +408,30 @@ class SimulatedAnnealing:
         self._dump_convergence(result_folder, t0)
 
         return self.best_plan
+
+    def _log_progress(self, iteration, cur_temp, cur_score, cur_score_list,
+                      noimprove_iter, cur_plan, cur_diff, result_folder):
+        """按频率打印进度并保存 history 可视化.
+
+        非空 move 与空 move 都会调用本方法, 保证 iteration 为 freq 整数倍时
+        始终产出 history 图, 不会因连续空 move 跳过整点而缺失.
+        """
+        if iteration % self.print_frequency == 0:
+            print(f"\nStep {iteration} noimprove_iter: {noimprove_iter} beststuck_iter: {self.best_score_iter}")
+            print(f"        温度: {cur_temp:.4f}, 当前分数={cur_score:.4f}, 最佳分数={self.best_score:.4f}")
+
+        if iteration % self.visualize_frequency == 0:
+            print(f"        change_score={cur_score_list[1]:.4f}, ES_score={cur_score_list[2]:.4f}, landscape_score={cur_score_list[-1]:.4f}.")
+            tensor_dict = {
+                'ori_plan': self.ori_plan,
+                'cur_plan': cur_plan,
+                'pred_diff': self.pred_diff,
+                'cur_diff': cur_diff,
+            }
+            tUtils.visualize_tensor_list(tensor_dict, self.text,
+                                        save_path=os.path.join(result_folder, 'history', f'iter_{iteration}.png'),
+                                        figsize=(20, 6),
+                                        color_map=COLOR_MAP)
 
     def _dump_convergence(self, result_folder: str, t0: float) -> None:
         """保存每代分数序列(.npy)和收敛统计(convergence.json), 供后处理分析.
