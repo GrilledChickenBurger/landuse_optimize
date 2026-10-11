@@ -104,12 +104,12 @@ SA: # 模拟退火参数
   T_start: 100 # 初始温度
   T_end: 0.1 # 终止温度
   cooling_rate: 0.9995 # 降温率
-  chain_length: 10 # 标准 SA: 每个温度层的 Markov 链长度(内循环步数)
-  max_noimprove_iter: 1000 # 最大无改进迭代次数
-  max_beststuck_iter: 3000 # 最优解停滞阈值
+  chain_length: 10 # 标准 SA: 每个温度层的 Markov 链长度(内循环步数); 1 温度层 = chain_length 个 move
+  max_noimprove_iter: 1000 # 最大无改进 move 数(按 move 计, 含空 move)
+  max_beststuck_iter: 3000 # 最优解停滞 move 数(按 move 计, 含空 move)
 
-  print_frequency: 100 # 每n步打印一次输出
-  visualize_frequency: 500 # 每n步可视化一次输出
+  print_frequency: 100 # 每 n 个 move 打印一次进度(按 move 计)
+  visualize_frequency: 500 # 每 n 个 move 输出一张 history 图(按 move 计)
   # ES_list: ["RAIN", "NJW", "ZSL", "PODU", "WATER", "CITY", "GD"]
   # ES_1: ['RAIN','NJW','PODU','WATER','CITY','GD']
   # ES_2: ['RAIN','ZSL']
