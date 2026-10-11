@@ -689,7 +689,8 @@ class GeneticAlgorithm:
                 # 交叉
                 c1, c2 = self.crossover_func(p1, p2, gen_ratio=gen_ratio,
                                              hard_restrict=self.hard_restrict,
-                                             cls_restrict=self.cls_restrict)
+                                             cls_restrict=self.cls_restrict,
+                                             ori_plan=self.ori_plan)
                 c1 = self.mutate_func(c1, gen_ratio=gen_ratio, noimprove_step=noimprove_step)
                 c2 = self.mutate_func(c2, gen_ratio=gen_ratio, noimprove_step=noimprove_step)
                 offspring.extend([c1, c2])

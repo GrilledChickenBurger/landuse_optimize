@@ -152,7 +152,7 @@ def initial_new_population(pop_size, scale_ratio, ori_plan,
 
 ```python
 def crossover(parent1, parent2, gen_ratio, hard_restrict,
-              cls_restrict=None, max_ratio=0.8, min_ratio=0.2)
+              cls_restrict=None, ori_plan=None, max_ratio=0.8, min_ratio=0.2)
     → [child1, child2]
 ```
 
@@ -160,13 +160,13 @@ def crossover(parent1, parent2, gen_ratio, hard_restrict,
 
 1. 计算当前交叉矩形比例：`current_ratio = max_ratio × (1 − gen_ratio) + min_ratio × gen_ratio`，随着代数推进（`gen_ratio` 从 0 → 1），`current_ratio` 从 `max_ratio` 线性缩小到 `min_ratio`，即**早期交换大块，后期交换小块**
 
-2. 随机选取矩形位置和尺寸（边长在 `[5, H × current_ratio]` 和 `[5, W × current_ratio]` 范围内）
+2. **单次**选取矩形位置和尺寸（边长在 `[5, H × current_ratio]` 和 `[5, W × current_ratio]` 范围内），不做拒绝采样重试
 
-3. **校验 `hard_restrict`**（最多 1000 次），失败则降级为无约束矩形（任意位置）
+3. **校验 `cls_restrict`**（如果提供）：对交换矩形内 cls_restrict==1 的像素，检查 incoming 值是否在 [51,52,53]（建设用地）中。若 incoming 值不在允许范围内，该像素保留原值不交换，其他像素照常交换
 
-4. **校验 `cls_restrict`**（如果提供）：对交换矩形内 cls_restrict==1 的像素，检查 incoming 值是否在 [51,52,53]（建设用地）中。若 incoming 值不在允许范围内，该像素保留原值不交换，其他像素照常交换
+4. 交换两个父本在矩形区域内的像素 → 产生两个子代
 
-5. 交换两个父本在矩形区域内的像素 → 产生两个子代
+5. **可行性检查**（提供 `ori_plan` 时）：子代若违反硬约束（改了 `hard_restrict==0` 的像素）或类别约束（51/53 改为非 5 类），则该子代**直接丢弃**、回退为对应父本（单次生成、不重试）
 
 ### mutate
 

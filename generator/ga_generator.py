@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from .sa_generator import area_wise_change, generate_new_plan
 from utils.tools import repeat
+from calculator.cal_feasibility import is_feasible
 
 def initial_new_population(
         pop_size:int,
@@ -86,11 +87,13 @@ def crossover(parent1:torch.Tensor, parent2:torch.Tensor,
               gen_ratio:float,
               hard_restrict:torch.Tensor,
               cls_restrict:torch.Tensor = None,
+              ori_plan:torch.Tensor = None,
               max_ratio=0.8,
               min_ratio=0.2):
     """
     crossover: 对两个父代方案进行交叉操作，生成两个子代方案.
-    交叉操作的方式为：随机选择一个矩形区域，将父代方案在该区域内的像素交换，得到两个子代方案.
+    交叉操作的方式为：单次随机选择一个矩形区域(不做拒绝采样重试)，交换父代在该区域内的像素;
+    若子代违反硬约束/类别约束, 则直接丢弃该子代并回退为对应父本(提供 ori_plan 时生效).
 
     Parameters:
     ----------
@@ -101,6 +104,8 @@ def crossover(parent1:torch.Tensor, parent2:torch.Tensor,
             用于限制crossover区域，只能在可修改区域内进行交叉
         cls_restrict: tensor, [1,1,128,128], 0-1张量, optional, 类别约束
             1表示该像素是51/53类型，只能改为5类（建设用地）；为None时不检查
+        ori_plan: tensor, [1,1,128,128], optional, 原始方案, 作为可行性判定基准.
+            提供时对子代做可行性检查, 不可行的子代直接丢弃(回退为对应父本); None 时跳过检查
         max_ratio: float, optional, 最大交叉比例, default=0.8
         min_ratio: float, optional, 最小交叉比例, default=0.2
 
@@ -118,31 +123,11 @@ def crossover(parent1:torch.Tensor, parent2:torch.Tensor,
 
     H, W = parent1.squeeze().shape
     
-    # 使用hard_restrict限制交换矩形的位置
-    valid_area_selected = False
-    count = 0
-    max_attempts = 1000  # 最大尝试次数
-    
-    while not valid_area_selected and count < max_attempts:
-        # crossover矩形区域的高度和宽度、位置
-        rect_h = random.randint(5, int(H * current_ratio))
-        rect_w = random.randint(5, int(W * current_ratio))
-        top = random.randint(0, H - rect_h)
-        left = random.randint(0, W - rect_w)
-        
-        # 检查选中的区域是否包含不能被修改的像素
-        selected_area_hard_restrict = hard_restrict[0, 0, top:top+rect_h, left:left+rect_w]
-        if torch.all(selected_area_hard_restrict):
-            valid_area_selected = True
-        count += 1
-    
-    if not valid_area_selected:
-        # 如果无法找到有效区域，使用原始方法（不限制）
-        print("Warning: Unable to find valid crossover area after 1000 attempts. Using unrestricted crossover.")
-        rect_h = random.randint(5, int(H * current_ratio))
-        rect_w = random.randint(5, int(W * current_ratio))
-        top = random.randint(0, H - rect_h)
-        left = random.randint(0, W - rect_w)
+    # 单次采样交叉矩形: 不做拒绝采样重试; 若落在不可修改区域, 由下方可行性检查直接丢弃
+    rect_h = random.randint(5, int(H * current_ratio))
+    rect_w = random.randint(5, int(W * current_ratio))
+    top = random.randint(0, H - rect_h)
+    left = random.randint(0, W - rect_w)
 
     # 保存父本1在矩形区域的值，用于后续交换
     p1_rect = child1[:, :, top:top+rect_h, left:left+rect_w].clone()
@@ -164,6 +149,13 @@ def crossover(parent1:torch.Tensor, parent2:torch.Tensor,
         # 无 cls_restrict 时，直接交换整个矩形区域
         child1[:, :, top:top+rect_h, left:left+rect_w] = p2_rect
         child2[:, :, top:top+rect_h, left:left+rect_w] = p1_rect
+
+    # 可行性检查: 不可行子代直接丢弃, 回退为对应父本 (单次生成, 不重试)
+    if ori_plan is not None:
+        if not is_feasible(child1, ori_plan, hard_restrict, cls_restrict):
+            child1 = parent1.clone()
+        if not is_feasible(child2, ori_plan, hard_restrict, cls_restrict):
+            child2 = parent2.clone()
 
     return child1, child2
 
@@ -202,4 +194,3 @@ def mutate(individual:torch.Tensor, **kwargs):
     )
     
     return mutated_individual
-
