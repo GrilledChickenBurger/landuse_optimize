@@ -19,13 +19,13 @@ def compute_W_final(NJW: torch.Tensor, RAIN: torch.Tensor, food_supply_param: to
     Returns:
         W_final: [1,1,128,128] 粮食生产潜力 (kg/(ha·a))
     """
-    # Miami 模型
+    # Miami 模型: 温度项为除法 30000/(1+e^{...}), 降水项为乘法 30000*(1-e^{-...})
     WT = 30000 / (1 + torch.exp(1.315 - 0.119 * NJW))
-    WR = 30000 / (1 - torch.exp(-0.000664 * RAIN))
-    # Thornthwaite Memorial 模型
+    WR = 30000 * (1 - torch.exp(-0.000664 * RAIN))
+    # Thornthwaite Memorial 模型: 蒸散项同为乘法 30000*(1-e^{-0.0009695(V-20)})
     L_ET = 300 + 25 * NJW + 0.05 * NJW ** 3
     V_ET = 1.05 * RAIN / (1 + (1.05 * RAIN / L_ET) ** 2) ** 0.5
-    WV = 30000 / (1 - torch.exp(-0.0009695 * (V_ET - 20)))
+    WV = 30000 * (1 - torch.exp(-0.0009695 * (V_ET - 20)))
     W = torch.min(torch.min(WT, WR), WV)
     return W * food_supply_param * 0.01
 
@@ -164,9 +164,9 @@ def calculate_food_supply(plan: torch.Tensor, NJW: torch.Tensor, RAIN: torch.Ten
     ------
     公式：
         WT = 30000 /( 1 + e ^(1.315 - 0.119T))
-        WR = 30000 /( 1 - e ^(-0.000664R))
-        Wv = 30000 /( 1 - e ^(-0.0009695( v - 20)))
-            = 30000 /( 1 - e ^(-0.0009695( 1.05R/[1+(1.05 R/L)2]1/2 - 20)))
+        WR = 30000 * (1 - e ^(-0.000664R))
+        Wv = 30000 * (1 - e ^(-0.0009695( v - 20)))
+            = 30000 * (1 - e ^(-0.0009695( 1.05R/[1+(1.05 R/L)2]1/2 - 20)))
 
         T: 年均气温，栅格
         R: 年均降雨量，栅格
