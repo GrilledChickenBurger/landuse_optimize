@@ -31,8 +31,9 @@ def build_valid_anchor_sets(ori_plan: torch.Tensor, hard_restrict: torch.Tensor,
                             scale_minmax_dict: Dict) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
     """
     预计算每个尺度下的合法锚点(矩形左上角)集合与积分图, 用于受控采样.\n
-    锚点 (y,x) 合法 当且仅当 以它为左上角、边长为该尺度最大边长 s_max 的正方形完全落在
-    hard_restrict 内且不含 LU=0 像素; 这样的锚点必能容纳任意 h,w <= s_max 的矩形.\n
+    锚点 (y,x) 合法 当且仅当 以它为左上角、边长为该尺度最大边长 s_max = int(sqrt(max_area))
+    的正方形完全落在 hard_restrict 内且不含 LU=0 像素;
+    由于该档矩形边长 <= int(sqrt(max_area)) = s_max, 这样的锚点必能容纳该档任意矩形.\n
     由于 hard_restrict 固定且 LU=0 像素永不改写, 本集合在整个优化过程中保持合法, 只需构建一次.\n
     Parameters:
     ----------
@@ -51,8 +52,12 @@ def build_valid_anchor_sets(ori_plan: torch.Tensor, hard_restrict: torch.Tensor,
 
     anchor_sets = {}
     for scale in ['small', 'mid', 'large']:
-        s_max = int(math.sqrt(scale_minmax_dict[scale]['max'])) + 1
-        s_max = min(s_max, height, width)
+        # area_wise_change 中边长 = randint(min_length, max_length),
+        # 而 max_length = int(sqrt(max_area)) + 1 (randint 上界取不到),
+        # 故该档实际最大边长为 int(sqrt(max_area)).
+        # 锚点方块取 int(sqrt(max_area)) 即可; 原实现多 +1 会让 large 档在大 pred
+        # 样本上要求多 1 像素的实心方块, 导致锚点集恒为空.
+        s_max = min(max(1, int(math.sqrt(scale_minmax_dict[scale]['max']))), height, width)
         # 向量化腐蚀: 批量计算所有锚点的 s_max×s_max 窗口合法像素数
         window_sum = (ii[s_max:height+1, s_max:width+1]
                       - ii[0:height-s_max+1, s_max:width+1]
