@@ -86,8 +86,7 @@ class AblationPipeline(BaseSweepPipeline):
 
     def apply_type_config_hook(self, type_config, exp: Dict[str, Any]) -> None:
         """ablation 模式应用极端收敛设置."""
-        if self.mode == 'ablation' and self.runner_config.type == 'SA':
-            type_config.T_end = 1e-6
+        # SA 消融的 T_end 改由 configs/optimizerConfig_ablation.yaml 提供 (不再强制 1e-6)
         if self.mode == 'ablation' and self.runner_config.type != 'SA':
             type_config.max_gen = 8000
 
