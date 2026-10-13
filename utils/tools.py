@@ -272,12 +272,13 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor],
     else:
         axes = axes.flatten()  # 二维数组展平
     
-    # 设置主标题
+    # 设置主标题: 置于图顶, 与第一行子图标题留出间距.
+    # 原实现 fig.text(0.1, 0.9) 与 subplot 顶边 0.9 正好重叠, 故改为 suptitle.
     title_prop = FONT['title']
     annot_prop = FONT['annot']
     if main_title:
-        fig.text(0.1, 0.9, main_title, ha='left', va='baseline', fontproperties=title_prop, color='black')
-        # fig.suptitle(main_title, fontsize=16, fontweight='bold')
+        fig.suptitle(main_title, x=0.02, y=0.99, ha='left', va='top',
+                     fontproperties=title_prop, color='black')
     # 绘制每个张量
     for i, (title, nparr) in enumerate(processed_tensors.items()):
             ax = axes[i]
@@ -329,9 +330,16 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor],
     # 隐藏多余的子图
     for i in range(num_tensors, len(axes)):
         axes[i].axis('off')
-    
-    if main_title:
-        plt.subplots_adjust(top=0.9)
+
+    # 布局: 顶部留白需同时容纳"子图标题 + 主标题", 否则会互相重叠; 多行时加大行距,
+    # 避免子图标题压到上一行图像. 留白按图高换算, 兼容矮图(如 figsize=(20,6)).
+    # (原实现仅在有主标题时设 top=0.9 且未设 hspace, 导致主标题/上行图像与子图标题重叠)
+    fig_h = fig.get_size_inches()[1]
+    title_h_in = title_prop.get_size() / 72.0
+    top_pad_in = title_h_in + 0.20 + (title_h_in + 0.20 if main_title else 0.0)
+    top = min(max(1.0 - top_pad_in / fig_h, 0.55), 0.955)
+    fig.subplots_adjust(top=top, bottom=0.03, left=0.03, right=0.97,
+                        hspace=0.38 if rows > 1 else 0.0, wspace=0.10)
     
     # 保存图像
     if save_path:
