@@ -184,6 +184,19 @@ class SimulatedAnnealing:
         self.es_score_list = []
         self.es_dict:Dict[str,List[float]] = {'food':[],'carbon':[],'water':[],'culture':[]}
         self.es_value_dict:Dict[str,List[float]] = {'food':[],'carbon':[],'water':[],'culture':[]}
+        # ---- 逐步(含空 move)序列: 与 score_step_list 同口径, 空步沿用上一步, 长度=总提议步数 ----
+        # 方案 A: 让单 run 的 charts 各子图横轴都对齐到总提议步数(如 46050).
+        self.change_step_list: List[float] = []
+        self.es_step_list: List[float] = []
+        self.landscape_step_list: List[float] = []
+        self.es_step_dict: Dict[str, List[float]] = {'food':[],'carbon':[],'water':[],'culture':[]}
+        self.es_value_step_dict: Dict[str, List[float]] = {'food':[],'carbon':[],'water':[],'culture':[]}
+        # 当前解各子项的最新取值, 供空 move 时沿用(初始与 get_initial_score_list 同形态)
+        self._cur_subscores: Dict[str, Any] = {
+            'change': float('nan'), 'es': float('nan'), 'landscape': float('nan'),
+            'es_dict': {k: float('nan') for k in ['food','carbon','water','culture']},
+            'es_value_dict': {k: float('nan') for k in ['food','carbon','water','culture']},
+        }
         self.text = ''
         self.print_frequency = config.print_frequency
         self.visualize_frequency = config.visualize_frequency
@@ -221,6 +234,28 @@ class SimulatedAnnealing:
             self.text = f'{self.text}, landscape_score={-landscape_score:.4f}'
 
         self.text = f'{self.text}.'
+
+        # 更新"当前子项值"缓存, 供空 move 沿用; 同步推入逐步序列(非空 move 分支)
+        self._cur_subscores['change'] = -float(change_score)
+        self._cur_subscores['es'] = float(es_score)
+        self._cur_subscores['landscape'] = -float(landscape_score)
+        for key in ['food','carbon','water','culture']:
+            if key in es_dict:
+                self._cur_subscores['es_dict'][key] = float(es_dict[key])
+            if key in es_value_dict:
+                self._cur_subscores['es_value_dict'][key] = float(es_value_dict[key])
+        self._append_subscore_step()
+
+
+    def _append_subscore_step(self) -> None:
+        """按当前子项值推入逐步序列(与 score_step_list 同口径). 空 move 时沿用缓存的上一步值."""
+        cs = self._cur_subscores
+        self.change_step_list.append(cs['change'])
+        self.es_step_list.append(cs['es'])
+        self.landscape_step_list.append(cs['landscape'])
+        for key in ['food','carbon','water','culture']:
+            self.es_step_dict[key].append(cs['es_dict'][key])
+            self.es_value_step_dict[key].append(cs['es_value_dict'][key])
 
 
     def evaluate_new_plan(self, new_plan: torch.Tensor, new_diff: torch.Tensor, new_score_list: List[float], 
@@ -312,6 +347,8 @@ class SimulatedAnnealing:
                                        noimprove_iter, cur_plan, cur_diff, result_folder)
                     # 空 move 方案未变: 当前分数沿用上一步, 但同样按"步"记录, 保证长度=总提议步数
                     self.score_step_list.append(float(cur_score))
+                    # 子项逐步序列同步沿用(方案 A), 保证各子图横轴与 total 一致
+                    self._append_subscore_step()
                     noimprove_iter += 1
                     iteration += 1
                     if noimprove_iter >= self.max_noimprove_iter or \
@@ -392,8 +429,23 @@ class SimulatedAnnealing:
             frg_model_path=self.frg_model_path,
             raw_data_root=RAW_DATA_ROOT
         )
-        # 绘制目标函数项的变化趋势图
-        score_list_data = [self.total_score_list, self.change_score_list, self.es_score_list, self.landscape_score_list, self.es_dict, self.es_value_dict]
+        # 绘制目标函数项的变化趋势图 (方案 A: 用逐步序列, 所有子图横轴对齐到总提议步数)
+        def _ffill(lst):
+            arr = np.array(lst, dtype=float)
+            fin = np.isfinite(arr)
+            if fin.any() and not fin[0]:
+                arr[:int(np.argmax(fin))] = arr[fin][0]
+            return list(arr)
+        es_step_dict = {k: _ffill(v) for k, v in self.es_step_dict.items()}
+        es_value_step_dict = {k: _ffill(v) for k, v in self.es_value_step_dict.items()}
+        score_list_data = [
+            _ffill(self.score_step_list),
+            _ffill(self.change_step_list),
+            _ffill(self.es_step_list),
+            _ffill(self.landscape_step_list) if self.use_landscape else [],
+            es_step_dict,
+            es_value_step_dict,
+        ]
         rUtils.draw_score_list(score_list_data, ['total_score', 'change_score', 'ES_score', 'landscape_score'],
                                 save_folder=os.path.join(result_folder, 'charts'))
         # 可视化最终方案
@@ -465,6 +517,20 @@ class SimulatedAnnealing:
             print(f"[warn] total_score_step 长度 {len(step_arr)} != 总提议步数 {total_step}; 空 move 记录可能缺失")
         np.save(os.path.join(result_folder, 'total_score_step.npy'), step_arr)
         np.save(os.path.join(result_folder, 'total_score_list.npy'), score_arr)
+        # 方案 A: 落盘子项逐步序列(空步沿用上一步, 长度=总提议步数). 前段连续空 move 的 nan 用首个有限值前向填充.
+        def _dump_step(lst, fname):
+            arr = np.array(lst, dtype=float)
+            fin = np.isfinite(arr)
+            if fin.any() and not fin[0]:
+                arr[:int(np.argmax(fin))] = arr[fin][0]
+            np.save(os.path.join(result_folder, fname), arr)
+        _dump_step(self.change_step_list, 'change_score_step.npy')
+        _dump_step(self.es_step_list, 'es_score_step.npy')
+        if self.use_landscape:
+            _dump_step(self.landscape_step_list, 'landscape_score_step.npy')
+        for es_key in ['food','carbon','water','culture']:
+            _dump_step(self.es_step_dict[es_key], f'es_{es_key}_step.npy')
+            _dump_step(self.es_value_step_dict[es_key], f'es_{es_key}_raw_step.npy')
         # 保存子指标逐代序列, 供后续子指标稳定性分析
         for attr_name, file_name in [
             ('change_score_list', 'change_score_list.npy'),
