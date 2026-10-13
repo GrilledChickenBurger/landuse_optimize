@@ -310,6 +310,8 @@ class SimulatedAnnealing:
                     # 否则大量空 move 会跳过整点(iteration%freq==0), 导致 history 缺失
                     self._log_progress(iteration, cur_temp, cur_score, cur_score_list,
                                        noimprove_iter, cur_plan, cur_diff, result_folder)
+                    # 空 move 方案未变: 当前分数沿用上一步, 但同样按"步"记录, 保证长度=总提议步数
+                    self.score_step_list.append(float(cur_score))
                     noimprove_iter += 1
                     iteration += 1
                     if noimprove_iter >= self.max_noimprove_iter or \
@@ -459,6 +461,8 @@ class SimulatedAnnealing:
         finite = np.isfinite(step_arr)
         if finite.any() and not finite[0]:
             step_arr[:int(np.argmax(finite))] = step_arr[finite][0]
+        if len(step_arr) != total_step:
+            print(f"[warn] total_score_step 长度 {len(step_arr)} != 总提议步数 {total_step}; 空 move 记录可能缺失")
         np.save(os.path.join(result_folder, 'total_score_step.npy'), step_arr)
         np.save(os.path.join(result_folder, 'total_score_list.npy'), score_arr)
         # 保存子指标逐代序列, 供后续子指标稳定性分析
