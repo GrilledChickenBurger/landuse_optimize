@@ -178,6 +178,7 @@ class SimulatedAnnealing:
 
         # text, charts, logs
         self.total_score_list = []
+        self.score_step_list: List[float] = []  # 逐步(含空 move)当前解分数, 长度=总提议步数
         self.change_score_list = []
         self.landscape_score_list = []
         self.es_score_list = []
@@ -343,6 +344,8 @@ class SimulatedAnnealing:
                 cur_score = cur_score_list[0]
                 # 更新记录目标函数项的列表
                 self.update_score_lists(cur_score_list)
+                # 推入逐步序列(与空 move 分支一致, 保证长度=总提议步数)
+                self.score_step_list.append(float(cur_score))
 
                 # 更新全局最优解（最小化问题）
                 if cur_score < self.best_score:
@@ -405,7 +408,7 @@ class SimulatedAnnealing:
                                     color_map=COLOR_MAP)
 
         # ablation 评估口径: 收敛速度记录
-        self._dump_convergence(result_folder, t0)
+        self._dump_convergence(result_folder, t0, iteration)
 
         return self.best_plan
 
@@ -433,8 +436,10 @@ class SimulatedAnnealing:
                                         figsize=(20, 6),
                                         color_map=COLOR_MAP)
 
-    def _dump_convergence(self, result_folder: str, t0: float) -> None:
+    def _dump_convergence(self, result_folder: str, t0: float, total_step: int) -> None:
         """保存每代分数序列(.npy)和收敛统计(convergence.json), 供后处理分析.
+
+        total_step 为 SA 总提议步数(含空 move), 用于推导空 move 占比.
 
         写入 .npy:
           - total_score_list.npy:    综合目标函数 tgt_func (越小越好)
@@ -448,6 +453,13 @@ class SimulatedAnnealing:
         """
         wall_time = time.perf_counter() - t0
         score_arr = np.array([float(s) for s in self.total_score_list])
+        # 逐步(含空 move)分数序列: 长度=总提议步数, 供 A/B/C 收敛曲线对齐同一横轴.
+        # 首个被评估 move 之前若连续空 move 会取到 inf, 用首个有限值前向填充.
+        step_arr = np.array(self.score_step_list, dtype=float)
+        finite = np.isfinite(step_arr)
+        if finite.any() and not finite[0]:
+            step_arr[:int(np.argmax(finite))] = step_arr[finite][0]
+        np.save(os.path.join(result_folder, 'total_score_step.npy'), step_arr)
         np.save(os.path.join(result_folder, 'total_score_list.npy'), score_arr)
         # 保存子指标逐代序列, 供后续子指标稳定性分析
         for attr_name, file_name in [
@@ -489,12 +501,19 @@ class SimulatedAnnealing:
         es_score = (float(self.es_score_list[self.best_score_eval_idx])
                     if 0 <= self.best_score_eval_idx < len(self.es_score_list) else float('nan'))
 
+        # 空 move 统计: total_step 为总提议步数, total_iter 为已评估(非空)move 数
+        evaluated = len(score_arr)
+        empty_iter = max(total_step - evaluated, 0)
+
         conv = {
             'iter_to_95pct': iter_to_95pct,
             'final_best': best,
             'es_score': es_score,
             'wall_time_sec': wall_time,
-            'total_iter': len(score_arr),
+            'total_iter': evaluated,
+            'total_step': total_step,
+            'empty_iter': empty_iter,
+            'empty_ratio': round(empty_iter / total_step, 4) if total_step else 0.0,
             'guided': self.guided,
             'disable_early_stop': self.disable_early_stop,
         }

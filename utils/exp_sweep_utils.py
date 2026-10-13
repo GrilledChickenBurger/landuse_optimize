@@ -385,7 +385,9 @@ def recompute_iter_to_95pct(exp_dir: str, index: str) -> None:
     fixed_budgets = [1000, 5000]
 
     for rd in run_dirs:
-        npy_p = os.path.join(rd, 'total_score_list.npy')
+        # 优先逐步(含空 move)序列, 使 A/B/C 横轴等长; 无则回退已评估 move 序列
+        step_p = os.path.join(rd, 'total_score_step.npy')
+        npy_p = step_p if os.path.exists(step_p) else os.path.join(rd, 'total_score_list.npy')
         conv_p = os.path.join(rd, 'convergence.json')
         if not (os.path.exists(npy_p) and os.path.exists(conv_p)):
             continue
@@ -766,7 +768,9 @@ class ExperimentResultStore:
         run_dirs = self.list_run_dirs(exp_name, index)
         series = []
         for rd in run_dirs:
-            p = os.path.join(rd, 'total_score_list.npy')
+            p = os.path.join(rd, 'total_score_step.npy')
+            if not os.path.exists(p):
+                p = os.path.join(rd, 'total_score_list.npy')
             if os.path.exists(p):
                 series.append(np.load(p))
         if not series:
@@ -796,7 +800,9 @@ class ExperimentResultStore:
             if os.path.exists(imp_p):
                 series.append(np.load(imp_p))
                 continue
-            p = os.path.join(rd, 'total_score_list.npy')
+            p = os.path.join(rd, 'total_score_step.npy')
+            if not os.path.exists(p):
+                p = os.path.join(rd, 'total_score_list.npy')
             if os.path.exists(p):
                 arr = np.load(p)
                 # 推断最小化/最大化: 读 experiment_summary.json
