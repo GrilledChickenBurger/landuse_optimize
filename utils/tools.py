@@ -250,11 +250,17 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor],
     else:
         rows, cols = layout
     
+    # 主标题可能多行(如每场景 ES 提升比例), 需按实际行数增高画布并预留顶部空间,
+    # 否则多行主标题会压住子图标题(各面板标题).
+    title_size_pt = FONT['title'].get_size()
+    line_h_in = title_size_pt / 72.0 * 1.4      # 每行标题高度(含行距)
+    n_title_lines = (main_title.count('\n') + 1) if main_title else 0
+
     # 计算图像大小
     if figsize is None:
-        # 根据布局自动计算合适的图像大小
+        # 根据布局自动计算合适的图像大小(+ 主标题所需高度)
         base_size = 5
-        figsize = (cols * base_size, rows * base_size)
+        figsize = (cols * base_size, rows * base_size + n_title_lines * line_h_in)
     
     # 限制图像大小以避免超过matplotlib的限制
     max_figsize = 50  # 限制最大图像尺寸
@@ -336,8 +342,9 @@ def visualize_tensor_list(tensor_dict: Dict[str, torch.Tensor],
     # (原实现仅在有主标题时设 top=0.9 且未设 hspace, 导致主标题/上行图像与子图标题重叠)
     fig_h = fig.get_size_inches()[1]
     title_h_in = title_prop.get_size() / 72.0
-    top_pad_in = title_h_in + 0.20 + (title_h_in + 0.20 if main_title else 0.0)
-    top = min(max(1.0 - top_pad_in / fig_h, 0.55), 0.955)
+    # 顶部留白 = 子图标题(1 行) + 主标题(按实际行数)
+    top_pad_in = title_h_in + 0.20 + (n_title_lines * line_h_in + 0.20 if main_title else 0.0)
+    top = min(max(1.0 - top_pad_in / fig_h, 0.35), 0.955)
     fig.subplots_adjust(top=top, bottom=0.03, left=0.03, right=0.97,
                         hspace=0.38 if rows > 1 else 0.0, wspace=0.10)
     
