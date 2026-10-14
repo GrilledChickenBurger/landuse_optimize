@@ -44,11 +44,20 @@ out_cfg = "/tmp/opt_tornado_cm_%s.yaml" % shard_tag
 open(out_cfg, "w", encoding="utf-8").write(base)
 
 # 通用参数扰动矩阵: 1 基线 + 20 扰动 = 21 组 (全部 score_cfg 覆写)
+# CM_LAMBDA_SCALE: 目标函数 4 个 λ 旋钮(基线+扰动值)的整体缩放倍数, 配合 λ×N 的 score_cfg 使用;
+#   非 λ 参数(inside_reward_coef/pure_base/pure_change)不缩放. 默认 1 (旧口径), λ×200 时设 200.
+_SC = float(os.environ.get("CM_LAMBDA_SCALE", "1"))
+
+
+def _sc(v):
+    return int(round(v * _SC))
+
+
 tu._TORNADO_PARAMS = [
-    ('tgt_function.lambda_ES_high', 1000, [500, 1500, 2000], 'score_cfg'),
-    ('tgt_function.lambda_ES_low', 5000, [2500, 7500, 10000], 'score_cfg'),
-    ('tgt_function.lambda_LS_high', 5, [20, 50, 100], 'score_cfg'),
-    ('tgt_function.lambda_LS_low', 1, [2, 5, 10], 'score_cfg'),
+    ('tgt_function.lambda_ES_high', _sc(1000), [_sc(500), _sc(1500), _sc(2000)], 'score_cfg'),
+    ('tgt_function.lambda_ES_low', _sc(5000), [_sc(2500), _sc(7500), _sc(10000)], 'score_cfg'),
+    ('tgt_function.lambda_LS_high', _sc(5), [_sc(20), _sc(50), _sc(100)], 'score_cfg'),
+    ('tgt_function.lambda_LS_low', _sc(1), [_sc(2), _sc(5), _sc(10)], 'score_cfg'),
     ('change_score.inside_reward_coef', 10, [5, 15, 20], 'score_cfg'),
     ('landscape.pure_base', 0.3, [0.1, 0.5], 'score_cfg'),
     ('landscape.pure_change', 0.2, [0.05, 0.1, 0.4], 'score_cfg'),
