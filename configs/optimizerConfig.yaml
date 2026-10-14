@@ -7,7 +7,7 @@ data:
   shape: [1, 128, 128] # [通道数, 高度, 宽度]
   factor_list: ["DEM", "DL", "GDP", "RK"] # 驱动因子列表
   es_list: ["RAIN", "NJW", "ZSL", "PODU", "WATER", "CITY", "GD"] # 生态系统服务数据列表
-  year: "10" # 基准年份
+  year: "15" # 基准年份
   lu_labels:
     [
       0,
@@ -36,8 +36,8 @@ data:
   batch_size: 1 # 批次大小
 
 model:
-  type: "attunet" # 模型类型, 需与 trainConfig.yaml 的 training.model_name 一致: attunet, unet, fcn, segformer, transunet, convlstm, cgan, vit, swin
-  model_path: "checkpoints/attunet_best_260212.pth" # 预训练模型路径
+  type: "transunet" # 模型类型, 需与 trainConfig.yaml 的 training.model_name 一致: attunet, unet, fcn, segformer, transunet, convlstm, cgan, vit, swin
+  model_path: "checkpoints/transunet/20261009_042543/best_model.pth" # 预训练模型路径
   segformer:
     dims: [32, 64, 160, 256]
     heads: [1, 2, 5, 8]
@@ -47,6 +47,9 @@ model:
     decoder_dim: 128
   transunet:
     img_size: 128
+    up_type: "dysample"
+    fusion_type: "cross_scale"
+    use_m1: true
 
   # 新增模型: 必须与 trainConfig.yaml 的 model.<type> 完全一致,
   # 否则 Stage-2 会用默认值建网, 加载 checkpoint 时 state_dict 不匹配
@@ -86,7 +89,7 @@ runner: # 随机优化算法通用参数
   type: "SA" # 优化器类型，目前支持 "SA" (模拟退火) "GA" (遗传算法)
   use_landscape: true # 是否使用景观破碎化约束
   optimize_num: -1 # 优化样本数量
-  scenario: "default" # scenario类型: ["default", "enterprise", "farmer", "tourist"], all表示所有scenario
+  scenario: "all" # scenario类型: ["default", "enterprise", "farmer", "tourist"], all表示所有scenario
   weight: # 不同scenario对应的权重配置
     default: { "food": 0.25, "carbon": 0.25, "water": 0.25, "culture": 0.25 }
     enterprise: { "food": 0.0, "carbon": 0.5, "water": 0.5, "culture": 0.0 }
