@@ -1593,6 +1593,19 @@ def _load_tiff_file(file_path, tensor_name, tensor_dict, required=True):
         return not required  # 如果是必需文件且不存在，返回False；如果是可选文件，返回True
 
 
+def _resolve_sample_dir(data_folder: str, scenario: str, idx: str):
+    """按实际目录名匹配样本文件夹, 兼容 10_<idx>_5 / 15_<idx>_5 等前缀。"""
+    import glob
+    pattern = os.path.join(data_folder, scenario, f"*_{idx}_5")
+    matches = sorted(m for m in glob.glob(pattern) if os.path.isdir(m))
+    if not matches:
+        return None
+    for m in matches:
+        if os.path.basename(m).startswith("10_"):
+            return m
+    return matches[0]
+
+
 def visualize_best_samples(sample_idx: str or list, 
                             data_folder: str, 
                             save_folder: str, 
@@ -1640,7 +1653,11 @@ def visualize_best_samples(sample_idx: str or list,
         
         # 使用辅助函数加载origin和target矩阵
         base_scenario = scenarios[0]
-        base_folder = os.path.join(data_folder, base_scenario, f"10_{idx}_5", f"plans_{idx}")
+        base_sample_dir = _resolve_sample_dir(data_folder, base_scenario, idx)
+        if base_sample_dir is None:
+            print(f"警告: 未找到样本目录 {base_scenario}/*_{idx}_5, 跳过样本 {idx}")
+            continue
+        base_folder = os.path.join(base_sample_dir, f"plans_{idx}")
         
         # 1. 加载origin矩阵 (必需文件)
         origin_path = os.path.join(base_folder, "ori_plan.TIF")
@@ -1654,16 +1671,18 @@ def visualize_best_samples(sample_idx: str or list,
         
         # 3. 加载四个场景的best_plan矩阵 (可选文件)
         for scenario in scenarios:
-            best_plan_path = os.path.join(data_folder, scenario, f"10_{idx}_5", f"plans_{idx}", "best_plan.TIF")
+            scenario_dir = _resolve_sample_dir(data_folder, scenario, idx)
+            best_plan_path = os.path.join(scenario_dir, f"plans_{idx}", "best_plan.TIF") if scenario_dir else ""
             _load_tiff_file(best_plan_path, scenario, tensor_dict, required=False)
         
         # 4. 收集性能数据
         for scenario in scenarios:
             # 使用工具函数查找performance文件
+            scenario_dir = _resolve_sample_dir(data_folder, scenario, idx)
             perf_paths = [
-                os.path.join(data_folder, scenario, f"10_{idx}_5", "performance_score.json"),
-                os.path.join(data_folder, scenario, f"10_{idx}_5", "performance.json")
-            ]
+                os.path.join(scenario_dir, "performance_score.json"),
+                os.path.join(scenario_dir, "performance.json")
+            ] if scenario_dir else []
             perf_path = find_valid_file(perf_paths, f"{scenario}场景的性能")
             
             if perf_path is None:
