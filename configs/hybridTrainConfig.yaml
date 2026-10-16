@@ -89,6 +89,31 @@ hybrid:
     "up_type=carafe+fusion_type=cross_scale+use_m1=1":
       batch_size: 8
       learning_rate: 0.000125
+    # M1 变体消融 (新增 3.5.1): 组A 同源/异构(位置固定 p8); 组B 异构 x 位置
+    "m1_src=same+m1_pos=p8":
+      batch_size: 8
+      learning_rate: 0.000125
+    "m1_src=hetero+m1_pos=p8":
+      batch_size: 8
+      learning_rate: 0.000125
+    "m1_src=hetero+m1_pos=p4":
+      batch_size: 8
+      learning_rate: 0.000125
+    "m1_src=hetero+m1_pos=p2":
+      batch_size: 8
+      learning_rate: 0.000125
+    "m1_src=hetero+m1_pos=tok":
+      batch_size: 8
+      learning_rate: 0.000125
+    "up_type=dysample+m1_src=hetero+m1_pos=tok":
+      batch_size: 8
+      learning_rate: 0.000125
+    "fusion_type=cross_scale+m1_src=hetero+m1_pos=tok":
+      batch_size: 8
+      learning_rate: 0.000125
+    "up_type=dysample+fusion_type=cross_scale+m1_src=hetero+m1_pos=tok":
+      batch_size: 8
+      learning_rate: 0.000125
 
 # 最终评测口径 (阈值扫描阶段)
 sweep:
@@ -382,6 +407,10 @@ model:
     attn_kwargs: {}
     # M1: 编码器输出端驱动因子×LU 交叉注意力开关 (decoder 之前并联接入)
     use_m1: false
+    # M1 变体 (新增 3.5.1 消融): 输入端 同源/异构 x 多位置; 两者同时设置才生效
+    #   m1_src: same | hetero    m1_pos: tok(1/16) | p8(1/8) | p4(1/4) | p2(1/2)
+    m1_src: null
+    m1_pos: null
     # decoder 可插拔算子开关, 见 models/decoder_ops/; 默认项与官方 TransUNet 等价
     up_type: "bilinear"       # bilinear(默认) | dysample(替换 3.1) | carafe(新增 3.2, 仅末级并联)
     conv_type: "conv2drelu"   # conv2drelu(默认) | large_kernel(替换 3.2) | parallel_local(新增 3.4)
