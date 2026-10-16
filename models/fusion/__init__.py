@@ -12,5 +12,6 @@
 """
 
 from .m1 import FactorLUCroAttention
+from .m1_input import InputFactorLUCrossAttn
 
-__all__ = ["FactorLUCroAttention"]
+__all__ = ["FactorLUCroAttention", "InputFactorLUCrossAttn"]

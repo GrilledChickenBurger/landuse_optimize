@@ -705,6 +705,7 @@ def hybrid_train_pipeline(config_path: str, model_list: Optional[List[str]] = No
 _TRANSUNET_OVERRIDE_KEYS = {
     "attn_type", "up_type", "conv_type", "fusion_type", "resblock_type",
     "parallel_local", "high_res_skip", "n_skip", "use_m1",
+    "m1_src", "m1_pos",
 }
 
 

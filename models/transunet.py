@@ -16,7 +16,7 @@ from torch.nn.modules.utils import _pair
 from .attention import build_attention
 from .blocks import build_block, StdConv2d
 from .decoder_ops import build_upsample, build_conv, build_fusion, Conv2dReLU, HighResSkipProj
-from .fusion import FactorLUCroAttention
+from .fusion import FactorLUCroAttention, InputFactorLUCrossAttn
 
 
 class ConfigDict(dict):
@@ -373,9 +373,36 @@ class DecoderCup(nn.Module):
         return x
 
 
+_M1_POS_DIV = {"p2": 2, "p4": 4, "p8": 8, "tok": 16}
+_M1_POS_FEAT_IDX = {"p8": 0, "p4": 1, "p2": 2}
+
+
+def _pick_heads(dim, max_heads=8):
+    """给通道数挑一个可整除的注意力头数 (优先 8)."""
+    for h in range(min(max_heads, dim), 0, -1):
+        if dim % h == 0:
+            return h
+    return 1
+
+
+def _resolve_m1_target(pos, config, img_size):
+    """把 M1 变体位置解析为 (目标通道数, 目标空间尺寸)."""
+    pos = str(pos)
+    if pos not in _M1_POS_DIV:
+        raise ValueError("m1_pos 仅支持 %s, 收到 %r" % (sorted(_M1_POS_DIV), pos))
+    div = _M1_POS_DIV[pos]
+    if pos == "tok":
+        out_ch = int(config.hidden_size)
+    else:
+        sc = list(getattr(config, "skip_channels", []))
+        out_ch = int(sc[_M1_POS_FEAT_IDX[pos]])
+    hw = (img_size // div, img_size // div)
+    return out_ch, hw
+
+
 class VisionTransformer(nn.Module):
     def __init__(self, config, img_size=224, num_classes=21843, zero_head=False, vis=False, in_channels=3,
-                 use_m1=False):
+                 use_m1=False, m1_src=None, m1_pos=None, m1_factor_ch=4, m1_lu_ch=6):
         super(VisionTransformer, self).__init__()
         self.num_classes = num_classes
         self.zero_head = zero_head
@@ -387,6 +414,18 @@ class VisionTransformer(nn.Module):
             num_heads=config.transformer["num_heads"],
             dropout=config.transformer["attention_dropout_rate"],
         ) if use_m1 else None
+
+        # M1 变体 (新增 3.5.1): 输入端 同源/异构 x 多位置 的 因子 x LU 交叉注意力
+        self.m1_input = None
+        self.m1_pos = None
+        if m1_src is not None and m1_pos is not None:
+            _out_ch, _target_hw = _resolve_m1_target(m1_pos, config, img_size)
+            self.m1_pos = str(m1_pos)
+            self.m1_input = InputFactorLUCrossAttn(
+                factor_ch=m1_factor_ch, lu_ch=m1_lu_ch, out_ch=_out_ch,
+                target_hw=_target_hw, num_heads=_pick_heads(_out_ch),
+                dropout=config.transformer["attention_dropout_rate"], src=str(m1_src),
+            )
         self.decoder = DecoderCup(config)
         self.segmentation_head = SegmentationHead(
             in_channels=config['decoder_channels'][-1],
@@ -398,9 +437,17 @@ class VisionTransformer(nn.Module):
     def forward(self, x):
         if x.size()[1] == 1:
             x = x.repeat(1, 3, 1, 1)
+        x_raw = x
         x, attn_weights, features = self.transformer(x)  # (B, n_patch, hidden)
         if self.m1 is not None:
             x = self.m1(x)
+        if self.m1_input is not None:
+            _delta = self.m1_input(x_raw)  # gate 初始化 0 -> 训练初期恒等
+            if self.m1_pos == "tok":
+                x = x + _delta.flatten(2).transpose(1, 2)
+            else:
+                _i = _M1_POS_FEAT_IDX[self.m1_pos]
+                features[_i] = features[_i] + _delta
         x = self.decoder(x, features)
         logits = self.segmentation_head(x)
         return logits
@@ -432,7 +479,8 @@ class TransUNet(nn.Module):
                  up_type: str = "bilinear", conv_type: str = "conv2drelu",
                  fusion_type: str = "concat", resblock_type: str = "preact",
                  parallel_local: bool = False, high_res_skip: bool = False,
-                 n_skip: int = 3):
+                 n_skip: int = 3, m1_src=None, m1_pos=None,
+                 m1_factor_ch: int = 4, m1_lu_ch: int = 6):
         super().__init__()
         config = get_r50_b16_config()
         config.n_classes = class_num
@@ -456,7 +504,9 @@ class TransUNet(nn.Module):
                                      num_classes=class_num,
                                      zero_head=False, vis=False,
                                      in_channels=in_channels,
-                                     use_m1=use_m1)
+                                     use_m1=use_m1,
+                                     m1_src=m1_src, m1_pos=m1_pos,
+                                     m1_factor_ch=m1_factor_ch, m1_lu_ch=m1_lu_ch)
 
     def forward(self, x):
         return self.vit(x)
