@@ -698,20 +698,20 @@ def grouped_box_plot_figure(
                         meanprops=dict(marker='D', markerfacecolor=_MEAN_COLOR,
                                        markeredgecolor=_MEAN_COLOR, markersize=7, zorder=5))
 
-        # 箱体: 边框/须/帽线 + 30% 透明度填充
+        # 箱体: 黑色边框/须/帽线 + 30% 透明度填充
         for patch, color in zip(bp['boxes'], colors_all):
             patch.set_facecolor(color)
             patch.set_alpha(0.3)
-            patch.set_edgecolor(color)
+            patch.set_edgecolor('black')
             patch.set_linewidth(1.2)
-        for whisker, color in zip(bp['whiskers'], [c for c in colors_all for _ in range(2)]):
-            whisker.set_color(color)
+        for whisker in bp['whiskers']:
+            whisker.set_color('black')
             whisker.set_linewidth(1.2)
-        for cap, color in zip(bp['caps'], [c for c in colors_all for _ in range(2)]):
-            cap.set_color(color)
+        for cap in bp['caps']:
+            cap.set_color('black')
             cap.set_linewidth(1.2)
         for median in bp['medians']:
-            median.set_color(_MEDIAN_COLOR)
+            median.set_color('black')
             median.set_linewidth(1.8)
 
         # 异常值散点

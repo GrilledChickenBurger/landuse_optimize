@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-"""稳定性实验 (GA) 分片启动入口: 每片 2 个样本 × 重复 5 次 (default 场景).
+"""稳定性实验 (GA) 分片启动入口: 每片 1 个样本 × 重复 5 次 (default 场景, λ×200).
 
 - 复用 main.py 顶部线程/确定性设置 (import main 触发).
 - 使用 configs/optimizerConfig_stability_ga.yaml (transunet/year15, vsp=0.8).
+- 目标函数用 configs/_score_cfg_full_x200.yaml (λ 为 score_cfg.yaml 的 ×200).
 - 按分片 id 隔离 MaxEnt 路径 (checkpoints/maxent-model_sklearn_15_stab_ga_s<shard>.ela).
 - 所有分片写同一个 timestamp 根目录 (results/ablation/<ts>/A_guided/run_<r>/<样本>/), 靠 convergence.json 断点续跑.
 
 注意: SA 与 GA 稳定性都落在 results/ablation/, 必须使用不同的 timestamp, 否则同一样本会相互覆盖.
 
 用法(仓库根目录):
-    nohup ./.venv/bin/python -u scripts/shards/run_stability_ga_shard.py <shard_id 0-4> <timestamp> > stab_ga_shard<id>.log 2>&1 &
-    (或直接运行 scripts/shards/launch_stability_ga_5shards.sh)
+    nohup ./.venv/bin/python -u scripts/shards/run_stability_ga_shard.py <shard_id 0-9> <timestamp> > stab_ga_shard<id>.log 2>&1 &
 """
 import os
 import sys
@@ -24,13 +24,13 @@ import yaml  # noqa: E402
 import main  # noqa: E402,F401  触发 main.py 顶部: OMP 线程限制 + torch 确定性配置
 from pipelines.ablation import ablation_pipeline  # noqa: E402
 
-# 10 个稳定性样本索引 (5 片 × 每片 2 个, 与 SA 稳定性一致)
+# 10 个稳定性样本索引 (10 片 × 每片 1 个, 与 SA 稳定性一致)
 IDXS = [1875, 639, 2439, 1833, 1956, 857, 2025, 1909, 531, 1506]
-PER_SHARD = 2
+PER_SHARD = 1
 N_REPEATS = 5
 
 BASE_CFG = os.path.join("configs", "optimizerConfig_stability_ga.yaml")
-SCORE_CFG = os.path.join("configs", "score_cfg.yaml")
+SCORE_CFG = os.path.join("configs", "_score_cfg_full_x200.yaml")
 
 
 def run(shard: int, ts: str) -> None:
@@ -40,6 +40,9 @@ def run(shard: int, ts: str) -> None:
 
     with open(BASE_CFG, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
+
+    # 强制 CPU: 并发分片共享一张 GPU 会 OOM (GPU 仅约容纳 10 片), 与 tornado 分片口径一致
+    cfg["device"]["use_gpu"] = False
 
     # 分片隔离 MaxEnt 路径 (data 与 common_params 必须一致)
     mp = f"checkpoints/maxent-model_sklearn_15_stab_ga_s{shard}.ela"
