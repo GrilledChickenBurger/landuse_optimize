@@ -146,8 +146,6 @@ data:
       transunet: 1
       vit: 4
       swin: 4
-      swinunet: 1
-      crossformer: 1
     server: # 4090 服务器
       unet: 8
       attunet: 32
@@ -155,8 +153,6 @@ data:
       transunet: 32
       vit: 32
       swin: 32
-      swinunet: 8
-      crossformer: 8
   # 按「机器档位」的 DataLoader 进程数, 与顶层 profile 联动.
   # 本机(Windows) 用 spawn: 建 worker 需把整个内存数据集序列化过去(实测 ~8.5s/DataLoader),
   # 而本机 batch 只有 1~8、__getitem__ 仅做索引, worker 无收益 => 0(主进程加载);
@@ -175,8 +171,6 @@ training:
   #             vit       → 未加权 softmax CE (≡ BCE, 无 label smoothing/mixup)
   #             fcn       → 未加权 CrossEntropy (≡ BCE)
   #             swin      → label smoothing 0.1 的 BCE (官方关闭 mixup 时的 LabelSmoothingCE 分支; mixup 未引入)
-  #             swinunet  → 0.4*CE + 0.6*soft Dice (smooth=1e-5, 官方实现)
-  #             crossformer → 未加权 CrossEntropy (≡ BCE, 官方实现)
   #             convlstm / cgan → 暂回退 0.5*BCE + 0.5*Dice (cgan 对抗损失需双网络; convlstm 原论文为回归)
   #           "focal_dice" = 统一 Focal+Dice 各 0.5 (保证多模型结构公平对比)
   loss_type: "original"
@@ -273,26 +267,6 @@ optimizer:
         epsilon: 0.00000001,
         gradient_clip: 1.0,
       }
-    swinunet:
-      {
-        name: "adamw",
-        learning_rate: 0.00005,
-        weight_decay: 0.0001,
-        beta_1: 0.9,
-        amsgrad: false,
-        epsilon: 0.00000001,
-        gradient_clip: 1.0,
-      }
-    crossformer:
-      {
-        name: "adamw",
-        learning_rate: 0.00005,
-        weight_decay: 0.0001,
-        beta_1: 0.9,
-        amsgrad: false,
-        epsilon: 0.00000001,
-        gradient_clip: 1.0,
-      }
   server:
     default:
       {
@@ -355,26 +329,6 @@ optimizer:
         gradient_clip: 1.0,
       }
     swin:
-      {
-        name: "adamw",
-        learning_rate: 0.00014,
-        weight_decay: 0.0001,
-        beta_1: 0.9,
-        amsgrad: false,
-        epsilon: 0.00000001,
-        gradient_clip: 1.0,
-      }
-    swinunet:
-      {
-        name: "adamw",
-        learning_rate: 0.00014,
-        weight_decay: 0.0001,
-        beta_1: 0.9,
-        amsgrad: false,
-        epsilon: 0.00000001,
-        gradient_clip: 1.0,
-      }
-    crossformer:
       {
         name: "adamw",
         learning_rate: 0.00014,
@@ -451,26 +405,6 @@ model:
     depths: [2, 2, 6, 2]
     num_heads: [3, 6, 12, 24]
     window_size: 7
-    mlp_ratio: 4.0
-    drop_path_rate: 0.1
-    decoder_dim: 256
-  swinunet:
-    img_size: 128
-    patch_size: 4
-    embed_dim: 96
-    depths: [2, 2, 2, 2]
-    num_heads: [3, 6, 12, 24]
-    window_size: 7
-    mlp_ratio: 4.0
-    drop_path_rate: 0.1
-  crossformer:
-    img_size: 128
-    patch_size: [4, 8, 16, 32]
-    embed_dim: 64
-    depths: [1, 1, 8, 6]
-    num_heads: [2, 4, 8, 16]
-    group_size: [7, 7, 7, 7]
-    crs_interval: [8, 4, 2, 1]
     mlp_ratio: 4.0
     drop_path_rate: 0.1
     decoder_dim: 256

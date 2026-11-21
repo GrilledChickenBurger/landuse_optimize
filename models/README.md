@@ -32,6 +32,7 @@ Stage-1 训练得到的模型在 Stage-2 优化阶段被**复用**：`utils/runn
 | `cgan.py`      | `CGAN`：pix2pix 的 U-Net 生成器（只含生成器，不含判别器）                          |
 | `vit.py`       | `ViT`：ViT 编码器（cls token 丢弃）+ 轻量上采样分割头                              |
 | `swin.py`      | `Swin`：Swin Transformer 4-stage 编码器 + 多尺度轻量解码器                         |
+| `dyscale_c_transunet.py` | `DyScaleCTransUNet`：固定结构版（DySample + cross_scale + 新 M1 hetero/tok） |
 
 ## 工厂函数 `create_model`
 
@@ -39,10 +40,10 @@ Stage-1 训练得到的模型在 Stage-2 优化阶段被**复用**：`utils/runn
 create_model(model_type: str, in_ch: int, out_ch: int, model_config: dict = None)
 ```
 
-- `model_type` ∈ {`attunet`, `unet`, `fcn`, `segformer`, `transunet`, `convlstm`, `cgan`, `vit`, `swin`}
+- `model_type` ∈ {`attunet`, `unet`, `fcn`, `segformer`, `transunet`, `convlstm`, `cgan`, `vit`, `swin`, `dyscale_c_transunet`}
 - `in_ch` = `len(factor_list) + 6`（4 个驱动因子 + 6 类简化 LU 的 one-hot）= 10
 - `out_ch` = 1（二分类变化掩码，输出为 raw logits，损失函数内部做 sigmoid）
-- `model_config` 来自 `configs/trainConfig.yaml` 的 `model.<type>` 节；`segformer`、`transunet`、`convlstm`、`cgan`、`vit`、`swin` 均在 YAML 中配置，`attunet`/`unet`/`fcn` 使用代码默认值
+- `model_config` 来自 `configs/trainConfig.yaml` 的 `model.<type>` 节；`segformer`、`transunet`、`convlstm`、`cgan`、`vit`、`swin` 均在 YAML 中配置，`attunet`/`unet`/`fcn` 使用代码默认值；`dyscale_c_transunet` 只接受 `img_size`（默认 128），其余结构固定
 
 工厂会把 `argparse.Namespace` 自动转成 `dict` 以兼容 YAML 加载方式。
 
@@ -305,7 +306,7 @@ h_t = o ⊙ tanh(c_t)
 
 参数量约 **~28.2M**（Swin-T 量级）。
 
-## 九模型对比
+## 模型对比（10 个）
 
 | 模型 | 参数量 | 编码器 | 解码器 | 跳跃连接 | 特点 |
 |---|---|---|---|---|---|
@@ -313,13 +314,18 @@ h_t = o ⊙ tanh(c_t)
 | U-Net | ~31M | 5-stage conv | nearest 上采样 + conv | concat | 经典架构，参数较多 |
 | AttU-Net | ~34.9M | 同 U-Net | 同 U-Net | concat + 注意力门 | 在跳跃上加门控，抑制无关区域 |
 | SegFormer | ~3-4M | MiT 4-stage Transformer | MLP 1×1 conv | 无编码器-解码器跳跃 | 最轻量，全局注意力 |
-| TransUNet | ~10-13M | ResNet 3-stage + ViT 瓶颈 | U-Net concat 解码 | concat（绕过 ViT） | CNN 局部 + Transformer 全局 |
+| TransUNet | ~105.2M | ResNet 3-stage + ViT 瓶颈 | U-Net concat 解码 | concat（绕过 ViT） | CNN 局部 + Transformer 全局 |
 | ConvLSTM | ~42.4M | 4-stage ConvLSTM | nearest 上采样 + conv | concat | 门控卷积编码，可扩展为多期序列输入 |
 | cGAN（pix2pix 生成器） | ~41.8M | Conv4×4 s2 + LeakyReLU | ConvTranspose4×4 + ReLU | concat（逐级） | 官方 pix2pix 生成器，判别器未启用 |
 | ViT | ~22.3M | PatchEmbed + 12×Transformer | 3×3 细化 + 双线性上采样 | 无 | 全局自注意力，patch=8，超参对齐官方 ViT-S_16 |
 | Swin | ~28.2M | 4-stage 窗口注意力 | 多尺度 1×1 融合 + 上采样 | 无（stage 间 PatchMerging） | 窗口注意力，复杂度对分辨率线性 |
+| DyScaleC-TransUNet | ~119.5M | R50-ViT-B/16 + 新 M1 | 4 级 DySample + cross_scale | concat | 固定最终组合（DySample + cross_scale + 新 M1 hetero/tok） |
+
+> `DyScaleCTransUNet` 是固定结构实现，不提供 `up_type` / `fusion_type` / `m1_src` / `m1_pos` 开关；可插拔消融版仍使用 `transunet.py`。两者在 `up_type=dysample + fusion_type=cross_scale + m1_src=hetero + m1_pos=tok` 下 state_dict 严格等价。
 
 ## 训练超参数
+
+> 注意：本节描述的是早期 `trainConfig.yaml` 口径。当前主训练入口 `pipelines/hybrid_train.py` 使用 `configs/hybridTrainConfig.yaml`：`training.loss_type=original`（逐模型原始损失）、warmup 6 + cosine 调度、按 `profile × model` 覆盖 batch_size / optimizer。以配置文件和实验记录为准。
 
 ### 通用设置
 

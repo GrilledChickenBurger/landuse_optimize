@@ -3,7 +3,7 @@
 
 - 复用 main.py 顶部线程/确定性设置 (import main 触发).
 - 使用 configs/optimizerConfig_stability.yaml (transunet/year15, vsp=0.8, T_start=100/T_end=50, chain_length=10).
-- 目标函数用 configs/_score_cfg_full_x200.yaml (λ 为 score_cfg.yaml 的 ×200).
+- 目标函数用 configs/score_cfg.yaml（默认 λ×200）。
 - 按分片 id 隔离 MaxEnt 路径 (checkpoints/maxent-model_sklearn_15_stab_s<shard>.ela), 避免并发写同一 .ela.
 - 所有分片写同一个 timestamp 根目录 (results/ablation/<ts>/A_guided/run_<r>/<样本>/), 靠 convergence.json 断点续跑.
 
@@ -28,7 +28,7 @@ PER_SHARD = 1
 N_REPEATS = 5
 
 BASE_CFG = os.path.join("configs", "optimizerConfig_stability.yaml")
-SCORE_CFG = os.path.join("configs", "_score_cfg_full_x200.yaml")
+SCORE_CFG = os.path.join("configs", "score_cfg.yaml")
 
 
 def run(shard: int, ts: str) -> None:

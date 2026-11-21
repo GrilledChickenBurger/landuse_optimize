@@ -10,8 +10,6 @@ from .convlstm import ConvLSTM_Seg
 from .cgan import CGAN
 from .vit import ViT
 from .swin import Swin
-from .swinunet import SwinUNet
-from .crossformer import CrossFormer
 from .dyscale_c_transunet import DyScaleCTransUNet
 
 def create_model(model_type:str, in_ch:int, out_ch:int, model_config:Optional[dict]=None):
@@ -41,10 +39,6 @@ def create_model(model_type:str, in_ch:int, out_ch:int, model_config:Optional[di
         return ViT(in_ch, out_ch, **model_config)
     elif model_type == 'swin':
         return Swin(in_ch, out_ch, **model_config)
-    elif model_type == 'swinunet':
-        return SwinUNet(in_ch, out_ch, **model_config)
-    elif model_type == 'crossformer':
-        return CrossFormer(in_ch, out_ch, **model_config)
     elif model_type == 'dyscale_c_transunet':
         return DyScaleCTransUNet(in_channels=in_ch, class_num=out_ch, **model_config)
     else:

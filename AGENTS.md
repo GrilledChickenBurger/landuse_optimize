@@ -9,7 +9,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 土地利用（LU）优化系统，分两阶段工作：
 
-1. **深度学习变化检测** — 训练语义分割模型（AttU-Net/U-Net/FCN/SegFormer/TransUNet），输入驱动因子 + 当前 LU，预测每个像素是否变化
+1. **深度学习变化检测** — 训练语义分割模型（AttU-Net/U-Net/FCN/SegFormer/TransUNet/ViT/Swin/DyScaleC-TransUNet），输入驱动因子 + 当前 LU，预测每个像素是否变化
 2. **随机优化搜索** — 以模型预测的变化概率图为先验，用 SA 或 GA 搜索在接近预测变化区域的前提下最大化生态系统服务的 LU 方案
 
 ```
@@ -82,7 +82,7 @@ main.py
 ├── pipelines/statistic.py    # 前置: 计算驱动因子归一化参数
 │
 models/                       # ANN 模型 (二分类语义分割)
-│   __init__.py               # create_model(): attunet, unet, fcn, segformer, transunet
+│   __init__.py               # create_model(): attunet, unet, fcn, segformer, transunet, vit, swin, dyscale_c_transunet
 │
 runner/                       # 随机优化器
 │   __init__.py               # create_runner(): SA, GA

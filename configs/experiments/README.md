@@ -10,11 +10,11 @@
   - `optimizerConfig_stability.yaml`    SA 稳定性（transunet/year15, vsp=0.8, T_end=50）
   - `optimizerConfig_stability_ga.yaml` GA 稳定性
 - `ablation/`   SA 消融 A/B/C 三组（guided / 无空间约束 / 随机区域约束）
-  - `optimizerConfig_ablation.yaml`     （待从 18307 服务器补回归档）
+  - `optimizerConfig_ablation.yaml`     SA 消融专用配置
 - `tornado/`    扰动（tornado）敏感性实验
-  - `optimizerConfig_tornado_{common,sa,ga}.yaml`（待补回归档）
+  - `optimizerConfig_tornado_{common,sa,ga}.yaml`
 
 ## 备注
 
-- ablation / tornado 专用配置当前仅存于 AutoDL 服务器（18307），待取回后归档至此。
-- 通用配置 `configs/optimizerConfig.yaml` 不在本目录归档范围内。
+- 稳定性分片脚本已改为直接使用根目录的 `configs/optimizerConfig_stability*.yaml` 与 `configs/score_cfg.yaml`。
+- `configs/optimizerConfig_ablation.yaml` 与 `configs/optimizerConfig_tornado_common.yaml` 已按本目录归档副本补齐到根路径；ablation / tornado 分片脚本可直接运行。若修改本目录归档副本，需同步根路径副本。

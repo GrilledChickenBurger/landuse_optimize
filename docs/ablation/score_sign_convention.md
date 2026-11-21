@@ -527,7 +527,7 @@ best_tgt_diff = (best_value - tgt_value) / tgt_value
 }
 ```
 
-⚠️ 这意味着对此样本（10_1723_5），baseline 优化结果**牺牲了大部分 ES 子项**（food/carbon/water 都下降）以换取目标函数最小化（change_score 改善 + 景观改善的总效应主导）。**这是因为 `es_relative_score` 在目标函数里被 λ_ES（baseline 默认 1000~5000）放大，但 change_score 的奖励 (`inside_reward_coef × area²`) 可能更大。**
+⚠️ 这意味着对此样本（10_1723_5），baseline 优化结果**牺牲了大部分 ES 子项**（food/carbon/water 都下降）以换取目标函数最小化（change_score 改善 + 景观改善的总效应主导）。**这是因为 `es_relative_score` 在目标函数里被 λ_ES（当前默认 200000~1000000，λ×200）放大，但 change_score 的奖励 (`inside_reward_coef × area²`) 可能更大。**
 
 ---
 

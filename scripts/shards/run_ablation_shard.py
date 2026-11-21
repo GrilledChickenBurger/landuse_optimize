@@ -7,8 +7,8 @@
 示例:
   python run_ablation_shard.py a1875 A 1875 20261014_120000
   python run_ablation_shard.py s1b1833 B 1833 20261014_120000
-  # λ×200 消融 (用第 5 个参数指定 score_cfg):
-  python run_ablation_shard.py a1875 A 1875 20261014_120000 configs/_score_cfg_full_x200.yaml
+  # 默认 score_cfg 已是 λ×200，可省略第 5 参数；需要其他配置时显式传入：
+  python run_ablation_shard.py a1875 A 1875 20261014_120000
 
 要点:
   1) 支持只跑指定组(A/B/C 子集) -> 可把 (样本 x 组) lane 分到多台机器;

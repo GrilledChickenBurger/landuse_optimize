@@ -4,7 +4,7 @@
 # 用法: bash scripts/shards/launch_pool.sh <tasks_file> <max_parallel>
 #
 # tasks_file 每行 = 一条完整命令 (不含 nohup/重定向), 例如:
-#   ./.venv/bin/python -u scripts/shards/run_ablation_shard.py a1875 A 1875 20261014_120000 configs/_score_cfg_full_x200.yaml
+#   ./.venv/bin/python -u scripts/shards/run_ablation_shard.py a1875 A 1875 20261014_120000
 #
 # 日志写到 <tasks_file 同级>/logs_<ts>/task<NN>.log
 set -u

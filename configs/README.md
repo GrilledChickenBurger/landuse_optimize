@@ -256,14 +256,14 @@ score_cfg       → [消融实验：调整目标函数参数]
 
 ### tgt_function — 目标函数参数
 
-| 字段             | 默认值 | 说明                                    |
-| ---------------- | ------ | --------------------------------------- |
-| `lambda_ES_high` | `1000` | pred_diff 像素数 > pixel_high 时的 λ_ES |
-| `lambda_ES_low`  | `5000` | pred_diff 像素数 < pixel_low 时的 λ_ES  |
-| `lambda_LS_high` | `5`    | pred_diff 像素数 > pixel_high 时的 λ_LS |
-| `lambda_LS_low`  | `1`    | pred_diff 像素数 < pixel_low 时的 λ_LS  |
-| `pixel_high`     | `6000` | λ 分段上界                              |
-| `pixel_low`      | `300`  | λ 分段下界                              |
+| 字段             | 默认值    | 说明                                    |
+| ---------------- | --------- | --------------------------------------- |
+| `lambda_ES_high` | `200000`  | pred_diff 像素数 > pixel_high 时的 λ_ES（λ×200） |
+| `lambda_ES_low`  | `1000000` | pred_diff 像素数 < pixel_low 时的 λ_ES（λ×200）  |
+| `lambda_LS_high` | `1000`    | pred_diff 像素数 > pixel_high 时的 λ_LS（λ×200） |
+| `lambda_LS_low`  | `200`     | pred_diff 像素数 < pixel_low 时的 λ_LS（λ×200）  |
+| `pixel_high`     | `2000`    | λ 分段上界                              |
+| `pixel_low`      | `300`     | λ 分段下界                              |
 
 ### change_score — 变化得分参数
 
@@ -296,11 +296,14 @@ score_cfg       → [消融实验：调整目标函数参数]
 
 ### ablation — 消融实验开关
 
-| 字段                   | 默认值  | 说明                                                         |
-| ---------------------- | ------- | ------------------------------------------------------------ |
-| `guided`               | `true`  | 设为 `false` 时跳过 `pred_grid_restrict`（无 ANN 引导约束）  |
-| `disable_change_score` | `false` | 设为 `true` 时目标函数屏蔽 change_score 项（测试无引导消融） |
-| `disable_early_stop`   | `false` | 设为 `true` 时禁用 noimprove/beststuck 早停（用于实验 A）    |
+| 字段                   | 默认值    | 说明                                                         |
+| ---------------------- | --------- | ------------------------------------------------------------ |
+| `guided`               | `true`    | 设为 `false` 时跳过 `pred_grid_restrict`（无 ANN 引导约束）  |
+| `disable_change_score` | `false`   | 设为 `true` 时目标函数屏蔽 change_score 项（测试无引导消融） |
+| `disable_early_stop`   | `false`   | 设为 `true` 时禁用 noimprove/beststuck 早停（用于实验 A）    |
+| `quantity_penalty_C`   | `27000000`| B 组纯面积惩罚系数；λ×200 下按 F_area:F_ES 量级对齐（6.2.3） |
+| `quantity_penalty_delta` | `0.1`   | 面积匹配软死区半宽（±10%）                                    |
+| `quantity_penalty_power` | `2`     | 死区外惩罚幂次                                                |
 
 ### 默认值一致性约束
 
