@@ -1,8 +1,50 @@
 import os
+import sys
+import time
+from datetime import datetime
+
+# 容器里 nproc 常远大于实际 CPU 配额(如 128 vs 16), torch/numpy 默认按 nproc 开线程会造成
+# OpenMP 忙等自旋抢满配额并饿住 GPU; 该现象只出现在 Linux 容器, 本机核数=配额则无需封顶.
+# 必须在导入 numpy/torch 之前设置环境变量; setdefault 保证已显式设置的值优先.
+_IS_LINUX = sys.platform.startswith('linux')
+if _IS_LINUX:
+    for _thread_env in ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
+                        "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ.setdefault(_thread_env, "1")
+
 import random
+
+import torch
+
+# 主进程线程数: Linux 容器取小值(避免与 DataLoader worker 抢配额, worker 内另行压到 1);
+# 本机核数即配额, 直接用满. 两种情况都可用 TORCH_NUM_THREADS 覆盖.
+_DEFAULT_THREADS = 4 if _IS_LINUX else (os.cpu_count() or 4)
+torch.set_num_threads(int(os.environ.get("TORCH_NUM_THREADS", _DEFAULT_THREADS)))
+# 确定性配置: 默认开启可复现模式(关 benchmark + deterministic 卷积), LU_DETERMINISM=0 关闭.
+# benchmark=True 会按输入尺寸自动挑最快卷积算法, 但同一代码不同 run 可能选到不同算法,
+# 是跨 run 不可复现的主要来源之一; deterministic=True 强制确定性卷积实现(略慢但可复现).
+_DETERMINISM = os.environ.get("LU_DETERMINISM", "1") == "1"
+if _DETERMINISM:
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+else:
+    # 输入尺寸固定(128x128), 让 cudnn 自动挑选最快卷积算法
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = False
+# 强制确定性算子: 有确定性实现的算子(如 interpolate 反向)强制走确定性实现;
+# 无确定性实现的算子按 warn_only 只告警一次(不中断训练, 但该算子仍可能非确定).
+# 可用 LU_DETERMINISTIC_ALGO=0 关闭(仅在排查性能问题时建议关闭).
+if _DETERMINISM and os.environ.get("LU_DETERMINISTIC_ALGO", "1") == "1":
+    try:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except TypeError:
+        torch.use_deterministic_algorithms(True)
+
 from pipelines.run_runner import pipeline
 from pipelines.experiment import experiment_pipeline
 from pipelines.train import training_pipeline,valid_pipeline, get_changed_indices
+from pipelines.hybrid_train import run_hybrid_train_pipeline
+from pipelines.threshold_sweep import threshold_sweep_pipeline
 from pipelines.statistic import get_params
 from pipelines.ablation import ablation_pipeline
 from pipelines.tornado import tornado_pipeline
@@ -12,6 +54,9 @@ from pipelines.results_analysis import (
     sample_visualization_pipeline,
     single_experiment_stat_pipeline,
 )
+from utils.exp_sweep_utils import load_representative_idxs, get_latest_experiment_dir
+from utils.tornado_utils import DEFAULT_SENSITIVITY_PARAMS
+
 
 def run_statistic_pipeline():
     config_path = os.path.join("configs","statisticConfig.yaml")
@@ -38,11 +83,15 @@ def run_train_pipeline():
 def run_valid_pipeline():
     config_path = os.path.join("configs","trainConfig.yaml")
     # model_checkpoint_path = os.path.join("checkpoints","attunet","20260212_045750","best_model.pth")
-    # model_checkpoint_path = os.path.join("checkpoints","unet","20260212_155606","best_model.pth")
+    model_checkpoint_path = os.path.join("checkpoints","unet","20260212_155606","best_model.pth")
     # model_checkpoint_path = os.path.join("checkpoints","segformer","20260213_062110","best_model.pth")
-    model_checkpoint_path = os.path.join("checkpoints","transunet","20260214_052453","best_model.pth")
+    # model_checkpoint_path = os.path.join("checkpoints","transunet","20260214_052453","best_model.pth")
 
     valid_pipeline(config_path, model_checkpoint_path, only_changed=False, datasets=["val"])
+
+def run_threshold_sweep_pipeline():
+    config_path = os.path.join("configs","trainConfig.yaml")
+    threshold_sweep_pipeline(config_path)
 
 def run_get_changed_indices_pipeline():
     config_path = os.path.join("configs","trainConfig.yaml")
@@ -51,36 +100,15 @@ def run_get_changed_indices_pipeline():
     print(f"所有数据集共有 {len(changed_indices)} 个变化样本, 索引为: {changed_indices}")
 
 
-def _get_latest_experiment_dir(category: str = 'ablation') -> str:
-    """自动查找 results/<category>/ 下最新的时间戳目录 (按目录名排序, 不受修改时间影响)."""
-    experiment_root = os.path.join("results", category)
-    if not os.path.exists(experiment_root):
-        raise FileNotFoundError(f"未找到实验结果目录: {experiment_root}")
-    dirs = [d for d in os.listdir(experiment_root) if os.path.isdir(os.path.join(experiment_root, d))]
-    if not dirs:
-        raise FileNotFoundError(f"实验结果目录为空: {experiment_root}")
-    dirs.sort(reverse=True)  # 时间戳格式 yyyymmdd_HHMMSS 按字符串排序即按时间
-    return os.path.join(experiment_root, dirs[0])
-
-
 def run_ablation_pipeline():
     """消融实验主线: 多次重复稳定性 + A/B/C 三组对比.
     mode 可选: 'stability' 只跑 baseline (完整方法); 'ablation' 跑 A/B/C 三组.
     样本来自 scripts/select_representative_samples.py 的输出.
     """
-    import json as _json
-    # 从代表性样本文件读 idxs (如未生成则手动指定)
-    rep_json = "_data/representative_samples.json"
-    if os.path.exists(rep_json):
-        with open(rep_json, 'r', encoding='utf-8') as f:
-            idxs = _json.load(f)['idxs_for_pipeline']
-    else:
-        print(f"[warn] {rep_json} 不存在, 用默认 idxs. 请先跑 scripts/select_representative_samples.py")
-        idxs = [479, 596, 760, 634, 1903]
     ablation_pipeline(
         opt_cfg_path=os.path.join("configs","optimizerConfig.yaml"),
         score_cfg_path=os.path.join("configs","score_cfg.yaml"),
-        idxs=idxs,
+        idxs=load_representative_idxs(),
         mode='stability',
         n_repeats=5,
     )
@@ -112,7 +140,7 @@ def run_ablation_plots_pipeline(experiment_root: str = None,
     """
     from pipelines.ablation_plots import run_all_ablation_plots, run_combined_stability_plots
     if experiment_root is None:
-        experiment_root = _get_latest_experiment_dir('ablation')
+        experiment_root = get_latest_experiment_dir('ablation')
 
     sibling_experiment_roots = sibling_experiment_roots or []
     if not sibling_experiment_roots:
@@ -151,16 +179,7 @@ def run_tornado_pipeline(max_samples: int = None):
     max_samples : int, optional
         最多使用的样本数; None 表示使用全部 idxs.
     """
-    import json as _json
-
-    rep_json = "_data/representative_samples.json"
-    if os.path.exists(rep_json):
-        with open(rep_json, 'r', encoding='utf-8') as f:
-            idxs = _json.load(f)['idxs_for_pipeline']
-    else:
-        print(f"[warn] {rep_json} 不存在, 用默认 idxs")
-        idxs = [479, 596, 760, 634, 1903]
-
+    idxs = load_representative_idxs()
     if max_samples is not None:
         idxs = random.sample(idxs, min(max_samples, len(idxs)))
 
@@ -179,30 +198,14 @@ def run_sensitivity_pipeline(top_k_params=None, max_samples: int = None):
     Parameters
     ----------
     top_k_params : list of dict, optional
-        待扫描的参数规格列表. 每项含 path, baseline, values, category.
+        待扫描的参数规格列表; None 用 utils.tornado_utils.DEFAULT_SENSITIVITY_PARAMS.
     max_samples : int, optional
         最多使用的样本数; None 表示使用全部 idxs.
     """
-    import json as _json
-
     if top_k_params is None:
-        top_k_params = [
-            {'path': 'tgt_function.lambda_ES_high', 'baseline': 1000,
-             'values': [200, 400, 600, 800, 1000, 1200, 1500, 1800, 2000],
-             'category': 'score_cfg'},
-            {'path': 'cooling_rate', 'baseline': 0.9995,
-             'values': [0.9985, 0.9990, 0.9992, 0.9993, 0.9995, 0.9996, 0.9997, 0.9998, 0.9999],
-             'category': 'opt_cfg'},
-        ]
+        top_k_params = DEFAULT_SENSITIVITY_PARAMS
 
-    rep_json = "_data/representative_samples.json"
-    if os.path.exists(rep_json):
-        with open(rep_json, 'r', encoding='utf-8') as f:
-            idxs = _json.load(f)['idxs_for_pipeline']
-    else:
-        print(f"[warn] {rep_json} 不存在, 用默认 idxs")
-        idxs = [479, 596, 760, 634, 1903]
-
+    idxs = load_representative_idxs()
     if max_samples is not None:
         idxs = random.sample(idxs, min(max_samples, len(idxs)))
 
@@ -232,32 +235,37 @@ def run_tornado_plots_pipeline(experiment_root: str = None,
     """
     from pipelines.tornado_plots import run_tornado_plots
     if experiment_root is None:
-        experiment_root = _get_latest_experiment_dir('tornado')
+        experiment_root = get_latest_experiment_dir('tornado')
     run_tornado_plots(experiment_root, baseline_name=baseline_name, mode=mode)
 
 
 def run_results_analysis_pipeline():
     sa_expr_path = "SA\\20260301_101241"
     ga_expr_path = "GA\\20260305_120735"
-    single_experiment_stat_pipeline(ga_expr_path)
-    sample_visualization_pipeline(ga_expr_path, mode="picked")
+    # single_experiment_stat_pipeline(ga_expr_path)
+    # sample_visualization_pipeline(ga_expr_path, mode="picked")
     comparison_pipeline(sa_expr_path, ga_expr_path)
-    model_comparison_pipeline()
+    # model_comparison_pipeline()
 
 if __name__ == "__main__":
     # pass
     # run_train_pipeline()
     # run_valid_pipeline()
+    run_hybrid_train_pipeline()
     # run_runner_pipeline()
     # run_experiment_pipeline()
     # run_ablation_pipeline()
-    run_ablation_plots_pipeline(
-        experiment_root='results/ablation/20260607_210931',
-        sibling_experiment_roots=['results/ablation/20260608_185005'],
-        mode='stability',
-        show_runtime=True,
-    )
-    # run_tornado_pipeline(3)
+    # run_ablation_plots_pipeline(
+    #     experiment_root='results/ablation/20260607_210931',
+    #     sibling_experiment_roots=['results/ablation/20260610_163941'],
+    #     mode='stability',
+    #     show_runtime=False,
+    #     combined_only=True
+    # )
+    # run_results_analysis_pipeline()
+    # run_tornado_pipeline()
     # run_sensitivity_pipeline()
-    # run_tornado_plots_pipeline()
-    pass
+    # run_tornado_plots_pipeline(mode='tornado',experiment_root='results/tornado/20260606_033319')
+    # run_tornado_plots_pipeline(mode='tornado',experiment_root='results/tornado/20260611_023835')
+    # run_tornado_plots_pipeline(mode='tornado',experiment_root='results/tornado/20260620_220209')
+    # pass

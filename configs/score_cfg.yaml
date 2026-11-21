@@ -3,10 +3,10 @@
 # ablation pipeline 通过覆写本文件字段来扫描敏感性
 
 tgt_function:
-  lambda_ES_high: 1000 # pred_diff 像素数 > pixel_high 时的 λ_ES
-  lambda_ES_low: 5000 # pred_diff 像素数 < pixel_low 时的 λ_ES
-  lambda_LS_high: 5 # pred_diff 像素数 > pixel_high 时的 λ_LS
-  lambda_LS_low: 1 # pred_diff 像素数 < pixel_low 时的 λ_LS
+  lambda_ES_high: 200000 # pred_diff 像素数 > pixel_high 时的 λ_ES（默认 λ×200）
+  lambda_ES_low: 1000000 # pred_diff 像素数 < pixel_low 时的 λ_ES（默认 λ×200）
+  lambda_LS_high: 1000 # pred_diff 像素数 > pixel_high 时的 λ_LS（默认 λ×200）
+  lambda_LS_low: 200 # pred_diff 像素数 < pixel_low 时的 λ_LS（默认 λ×200）
   pixel_high: 2000
   pixel_low: 300
 
@@ -61,6 +61,6 @@ ablation:
   guided: true # 无引导时设 false: 跳过 pred_grid_restrict
   disable_change_score: false # 无引导时设 true: tgt_func 屏蔽 change 项
   disable_early_stop: false # 实验 A 设 true: 禁用 noimprove/beststuck 早停
-  quantity_penalty_C: 10000 # B组面积惩罚/奖励系数，与 change_score 量级对齐
+  quantity_penalty_C: 27000000 # B组面积惩罚/奖励系数；λ×200 下按 F_area:F_ES 量级对齐重标定（6.2.3）
   quantity_penalty_delta: 0.1 # 软死区半宽（±10%）
   quantity_penalty_power: 2 # 死区外惩罚幂次

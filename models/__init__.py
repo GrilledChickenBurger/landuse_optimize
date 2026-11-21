@@ -6,6 +6,11 @@ from .unet import AttU_Net, U_Net
 from .fcn import FCN
 from .segformer import Segformer
 from .transunet import TransUNet
+from .convlstm import ConvLSTM_Seg
+from .cgan import CGAN
+from .vit import ViT
+from .swin import Swin
+from .dyscale_c_transunet import DyScaleCTransUNet
 
 def create_model(model_type:str, in_ch:int, out_ch:int, model_config:Optional[dict]=None):
     print(f"\n================= 开始初始化模型【{model_type}】... =================")
@@ -26,5 +31,15 @@ def create_model(model_type:str, in_ch:int, out_ch:int, model_config:Optional[di
         return TransUNet(in_channels=in_ch,
                           class_num=out_ch,
                           **model_config)
+    elif model_type == 'convlstm':
+        return ConvLSTM_Seg(in_ch, out_ch, **model_config)
+    elif model_type == 'cgan':
+        return CGAN(in_ch, out_ch, **model_config)
+    elif model_type == 'vit':
+        return ViT(in_ch, out_ch, **model_config)
+    elif model_type == 'swin':
+        return Swin(in_ch, out_ch, **model_config)
+    elif model_type == 'dyscale_c_transunet':
+        return DyScaleCTransUNet(in_channels=in_ch, class_num=out_ch, **model_config)
     else:
         raise ValueError(f"不支持的模型类型: {model_type}")

@@ -40,6 +40,37 @@ warnings.filterwarnings("ignore")
 pair_colors = ['#FFCC02', '#00458C']
 
 
+def apply_model_to_array(model, raster_arrays, nodata=0.0, nodata_idx=None):
+    """用 MaxEnt 模型对栅格数组逐像元预测。
+
+    兼容层: elapid 1.0 已移除 apply_model_to_array, 这里用 model.predict 对展平后的
+    像元特征矩阵做预测, 再 reshape 回栅格并应用无效像元掩膜, 与旧接口行为等价。
+
+    Parameters
+    ----------
+    model : elapid.MaxentModel, 已训练的 MaxEnt 模型
+    raster_arrays : ndarray [n_features, H, W], 特征顺序需与训练时一致
+    nodata : float, 无效像元的填充值
+    nodata_idx : ndarray 或 None, 布尔掩膜([n_features,H,W] 或 [H,W]), True 表示无效像元
+
+    Returns
+    -------
+    pred : ndarray [H, W]
+    """
+    arr = np.asarray(raster_arrays)
+    if arr.ndim != 3:
+        raise ValueError(f"raster_arrays must be [n_features, H, W], got {arr.shape}")
+    n_features, H, W = arr.shape
+    X = arr.reshape(n_features, H * W).T
+    pred = np.asarray(model.predict(X), dtype=np.float32).reshape(H, W)
+    if nodata_idx is not None:
+        mask = np.asarray(nodata_idx)
+        if mask.ndim == 3:
+            mask = np.any(mask, axis=0)
+        pred = np.where(mask, np.float32(nodata), pred)
+    return pred
+
+
 def get_tgt_points_data_from_csv(csv_path: str, show_plot: bool = False, raster_sample: Optional[str] = None) -> gpd.GeoDataFrame:
     """
     从csv文件中读取样本点（物种出现点）的位置信息，并转换为GeoDataFrame格式\n
@@ -359,7 +390,7 @@ def predict_and_return_arrays(model_path, raster_arrays, labels:list):
     nodata = 0.0
     LU_idx = labels.index('LU')
     nodata_idx = np.where(raster_arrays[LU_idx] == nodata)
-    pred = ela.apply_model_to_array(model, raster_arrays, nodata, nodata_idx)
+    pred = apply_model_to_array(model, raster_arrays, nodata, nodata_idx)
     print(pred)
     return pred
 

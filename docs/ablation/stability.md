@@ -151,7 +151,7 @@
 
 当 `run_ablation_plots_pipeline` 同时传入 `experiment_root` (SA) 和 `sibling_experiment_roots` (GA) 时：
 
-1. 先分别处理 SA 和 GA 各自的实验目录，在各自 `<root>/plots/` 下产出单算法的 `stability_runs.csv` / `stability_per_sample.csv` / `stability_summary.csv` 及对应图表。
+1. 先分别处理 SA 和 GA 各自的实验目录，在各自 `<root>/plots/` 下产出单算法的 `stability_runs.csv` / `stability_per_sample.csv` / `stability_summary.csv` / `dar_detail.csv` / `dar_matrix.csv` / `dar_summary.csv` 及对应图表。
 2. 在 SA / GA 的 **同级目录** 新建合并文件夹 `<sa_timestamp>+<ga_timestamp>_combined/`，内容包含：
    - `plots/stability_runs.csv`：SA + GA 合并的原始记录
    - `plots/stability_per_sample.csv`：每 (sample × algorithm) 的 CV 统计 (含 F/ES/RT)
@@ -164,6 +164,83 @@
 
 ***
 
+## 8. 维度达标率矩阵 (DAR)
+
+> DAR 回答 CV 分析无法回答的问题："ES score 稳定的表象下，各维度的优化方向是否一致？"
+
+### 8.1 问题背景
+
+§1-§6 的稳定性分析回答了"优化器是否收敛到相近的综合目标值"——`F(S)` 和 `es_score`（来自 `convergence.json`）的 CV% 很低，说明同一样本 5 次独立运行产出相近的加权综合得分。
+
+**但这不能排除维度间补偿效应**：优化器可能在不同 run 中以 water 超额收益补偿 food 的损失，维持加权和恒定。DAR 通过统计各维度 `best_plan > tgt_plan` 的频率，直接暴露这种结构性不一致。
+
+### 8.2 数据来源
+
+与 CV 分析不同，DAR 读取 `performance.json` 中的 **ES 绝对原始值**（而非 convergence.json 中的加权标量）：
+
+| 字段 | 含义 | 示例 (food, 10_1417_5) |
+|------|------|----------------------|
+| `ES.{d}.best_plan` | 该 run 产出方案在维度 d 的 ES 原始值 | 17,867,210 |
+| `ES.{d}.tgt_plan` | 目标方案在维度 d 的 ES 值（跨 run 恒定）| 17,825,510 |
+
+### 8.3 计算流程
+
+对每个样本 $s$ 和维度 $d \in \{\text{food}, \text{carbon}, \text{water}, \text{culture}\}$：
+
+1. **逐 Run 判断**：$\mathbb{1}_{r,d} = \mathbf{1}[\text{best\_plan}_{r,d} > \text{tgt\_plan}_d]$
+2. **单样本达标率**：$\text{DAR}_d^{(s)} = \frac{1}{R} \sum_{r=1}^{R} \mathbb{1}_{r,d}$，$R=5$
+3. **跨样本汇总**：对每个维度计算均值、标准差、最小/最大值
+
+DAR 取值范围 $[0, 1]$，步长 $1/R = 0.2$：
+- **DAR = 1.0**：该维度在所有 5 次 run 中均优于 target（方向完全确定）
+- **DAR = 0.0**：该维度在所有 5 次 run 中均未达标（方向完全确定）
+- **DAR ≈ 0.5**：方向不确定，存在反转
+
+### 8.4 输出文件
+
+| 文件 | 颗粒度 | 关键列 |
+|------|--------|--------|
+| `dar_detail.csv` | 样本 × Run | `sample_id, run, food_beat, carbon_beat, water_beat, culture_beat` |
+| `dar_matrix.csv` | 样本 | `sample_id, n_pred, level, n_runs, food_dar, carbon_dar, water_dar, culture_dar` |
+| `dar_summary.csv` | 维度 | `dimension, mean_dar, std_dar, min_dar, max_dar, qualitative_pattern` |
+
+**定性模式分类**（基于跨样本 DAR 均值）：
+- DAR ≥ 0.8 → **稳定达标型**
+- DAR ≤ 0.2 → **系统未达标型**
+- 其余 → **方向不确定型**
+
+### 8.5 实现入口
+
+```python
+from utils.exp_sweep_utils import build_dar_matrix_csv, build_dar_summary_csv
+
+# 对 baseline 实验目录计算 DAR
+matrix = build_dar_matrix_csv(
+    'results/ablation/<ts>/A_guided',
+    rep_json_path='results/ablation/<ts>/representative_samples.json',  # 可选
+    run_start=0, run_end=4,
+)
+build_dar_summary_csv(matrix)
+
+# 或使用便捷函数一键生成三张表
+from utils.exp_sweep_utils import build_dar_all
+build_dar_all('results/ablation/<ts>/A_guided', run_start=0, run_end=4)
+```
+
+后处理 pipeline `run_all_ablation_plots()` 在 stability 模式下自动调用 DAR，输出到 `<experiment_root>/plots/dar_*.csv`。
+
+### 8.6 DAR 与 CV 的分工
+
+| 问题 | 适用指标 | 数据来源 |
+|------|---------|---------|
+| 综合目标值是否稳定收敛？ | $F(S)$ 的 CV, ES score 的 CV | `convergence.json` |
+| 各维度方向是否一致？ | DAR（达标率） | `performance.json` ES 绝对原始值 |
+| 同维度波动幅度多大？ | ES 绝对值的 CV（同维度内） | `performance.json` ES 绝对原始值 |
+
+> **注意**：DAR 仅对 baseline（A_guided，完整方法）计算。B_unguided / C_random 作为 ablation 对照，其优化方向不确定属于预期行为。
+
+***
+
 ## 附录：数据流总结
 
 | 处理阶段     | 输入     | 输出                   | 颗粒度       |
@@ -173,6 +250,9 @@
 | 3. 跨样本汇总 | 表2     | `stability_summary.csv` (平均 CV, 最大 CV, CV≤5% 占比) | 算法 × 指标 |
 | 4. SA+GA 合并 | SA、GA 的 `stability_runs.csv` | 合并目录下的 CSV + 图表 + `combined_meta.json` | 算法对比 |
 | 5. 图表    | 表1, 表2 | 箱线图 / CV 折线图          | （可视化用）    |
+| 6. DAR 逐 Run 判断 | `performance.json` (ES 绝对原始值) | `dar_detail.csv` (best_plan > tgt_plan 的 0/1 判断) | 样本 × Run |
+| 7. DAR 矩阵 | `dar_detail.csv` | `dar_matrix.csv` (每样本每维度达标率, 取值 0~1) | 样本 |
+| 8. DAR 汇总 | `dar_matrix.csv` | `dar_summary.csv` (跨样本 DAR 均值/标准差/定性模式) | 维度 |
 
 > 实现入口：`pipelines/ablation_plots.py::run_all_ablation_plots`，
 > 通过 `mode='stability' / 'ablation' / 'auto'` 选择产出范围，

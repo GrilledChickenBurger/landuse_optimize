@@ -3,6 +3,7 @@ import os
 import sys
 import json
 import copy
+import glob
 import random
 from argparse import Namespace
 from datetime import datetime
@@ -149,6 +150,27 @@ class BaseSweepPipeline:
                 return True
         return False
 
+    def _experiment_complete(self, exp_save_folder: str, exp: Dict[str, Any]) -> bool:
+        """判断本进程负责的 (样本, run) 是否已全部产出 convergence.json.
+
+        不能仅凭 manifest.json 判定: manifest 由任一先跑完该实验的进程写入, 当多个
+        分片共享同一时间戳目录时, 其它分片会因此整实验跳过自己尚未计算的样本
+        (导致结果大面积缺失). 这里改为按本进程 idxs × n_repeats 逐个核对结果文件.
+        """
+        if not self.idxs:
+            return False
+        n_rep = exp.get('n_repeats', self.n_repeats)
+        wanted = {str(x) for x in self.idxs}
+        for r in range(n_rep):
+            run_dir = os.path.join(exp_save_folder, f'run_{r}')
+            done = {
+                _safe_extract_idx(os.path.basename(os.path.dirname(p)))
+                for p in glob.glob(os.path.join(run_dir, '*', 'convergence.json'))
+            }
+            if not wanted.issubset(done):
+                return False
+        return True
+
     def _write_manifest(self, exp_save_folder: str, exp: Dict[str, Any]) -> None:
         manifest = {
             'name': exp['name'],
@@ -187,7 +209,7 @@ class BaseSweepPipeline:
         for exp in matrix:
             exp_name = exp['name']
             exp_save_folder = os.path.join(self.root_save, exp_name)
-            if self.is_processed and os.path.exists(os.path.join(exp_save_folder, 'manifest.json')):
+            if self.is_processed and self._experiment_complete(exp_save_folder, exp):
                 print(f"\n实验【{exp_name}】已完成, 跳过")
                 continue
 

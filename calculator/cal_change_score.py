@@ -47,7 +47,7 @@ def cal_change_score(cur_diff: torch.Tensor, pred_diff: torch.Tensor, info_dict:
     if cfg.ablation.disable_change_score:
         # A: 无空间约束：纯变化面积限制模式，只限制像素总数，不限位置
         target_n = torch.count_nonzero(pred_diff).item()
-        C = getattr(cfg.ablation, 'quantity_penalty_C', 4e5)
+        C = getattr(cfg.ablation, 'quantity_penalty_C', 2.7e7)
         delta = getattr(cfg.ablation, 'quantity_penalty_delta', 0.1)
         power = getattr(cfg.ablation, 'quantity_penalty_power', 2)
         return cal_quantity_value(cur_diff, target_n, delta=delta, C=C, power=power)

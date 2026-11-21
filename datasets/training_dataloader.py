@@ -58,7 +58,10 @@ def create_training_data_pack(xf_src: np.ndarray, xf_tgt: np.ndarray,
     
     if (only_changed and change_label == 1) or (not only_changed):
         # 计算diff: tgtLU - srcLU
-        diff = np.expand_dims(xf_src[-1] != xf_tgt[-1], axis=0)
+        # 统一为 float32: 数据增强会把 factor(float)/src(float)/diff 拼接后升格, 若 diff 保持 bool,
+        # 增强副本为 float32 而原始样本为 bool, 同一 batch 内 dtype 不一致会令 DataLoader 的
+        # 多进程 collate(torch.stack 带预分配 out) 报 "input types can't be cast".
+        diff = np.expand_dims((xf_src[-1] != xf_tgt[-1]).astype(np.float32), axis=0)
         diff_processed = torch.from_numpy(diff)
         # 对srcLU进行one-hot编码
         srcLU_onehot = one_hot_lu(torch.from_numpy(xf_src[factor_num - 1 :]))

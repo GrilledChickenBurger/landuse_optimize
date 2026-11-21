@@ -23,7 +23,7 @@
 
 ```yaml
 training:
-  model_name: "attunet"    # 可选: attunet, unet, fcn, segformer, transunet
+  model_name: "attunet"    # 可选: attunet, unet, fcn, segformer, transunet, vit, swin, dyscale_c_transunet
   num_epochs: 100
 
 data:
@@ -186,7 +186,7 @@ logs/{model_name}/{run_timestamp}/
 
 ```yaml
 training:
-  model_name: "unet"  # attunet, unet, fcn, segformer, transunet
+  model_name: "unet"  # attunet, unet, fcn, segformer, transunet, vit, swin, dyscale_c_transunet
 ```
 
 SegFormer 使用独立优化器配置（AdamW），无需额外修改。

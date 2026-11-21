@@ -10,10 +10,10 @@ from typing import Dict
 # 旧 pipeline 不传 score_cfg 时由 get_default_score_cfg() 兜底, 保证行为不变
 _DEFAULT_SCORE_CFG_DICT = {
     "tgt_function": {
-        "lambda_ES_high": 1000,
-        "lambda_ES_low": 5000,
-        "lambda_LS_high": 5,
-        "lambda_LS_low": 1,
+        "lambda_ES_high": 200000,
+        "lambda_ES_low": 1000000,
+        "lambda_LS_high": 1000,
+        "lambda_LS_low": 200,
         "pixel_high": 2000,
         "pixel_low": 300,
     },
@@ -45,7 +45,7 @@ _DEFAULT_SCORE_CFG_DICT = {
         "guided": True,
         "disable_change_score": False,
         "disable_early_stop": False,
-        "quantity_penalty_C": 10000,
+        "quantity_penalty_C": 27000000,
         "quantity_penalty_delta": 0.1,
         "quantity_penalty_power": 2,
     },

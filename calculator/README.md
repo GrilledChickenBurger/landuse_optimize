@@ -141,11 +141,11 @@ pure_score = LU类型数 × 斑块总数 × (Shannon熵 + 1)
 
 pred_diff 的像素数 n 变化很大（几十到上万）。n 越大，单像素 ES 贡献越分散，ES 项容易被淹没；n 越小，每个像素的 ES 影响很大，需要更大的 λ_ES 来平衡。
 
-| pred_diff 像素数 n | λ_ES     | λ_LS     | 场景                                      |
-| ------------------ | -------- | -------- | ----------------------------------------- |
-| n > 6000           | 1000     | 5        | 大面积变化，ES 项权重较低，景观项权重较高 |
-| n < 300            | 5000     | 1        | 小面积变化，ES 项权重高，景观项不太重要   |
-| 300 ~ 6000         | 线性插值 | 线性插值 | 中间状态平滑过渡                          |
+| pred_diff 像素数 n | λ_ES       | λ_LS      | 场景                                      |
+| ------------------ | ---------- | --------- | ----------------------------------------- |
+| n > 2000           | 200000     | 1000      | 大面积变化，ES 项权重较低，景观项权重较高（λ×200） |
+| n < 300            | 1000000    | 200       | 小面积变化，ES 项权重高，景观项不太重要（λ×200）   |
+| 300 ~ 2000         | 线性插值   | 线性插值  | 中间状态平滑过渡                          |
 
 插值公式：
 
@@ -161,18 +161,19 @@ ratio = (n - pixel_low) / (pixel_high - pixel_low)
 
 所有可调参数在 `configs/score_cfg.yaml` 中：
 
-| 配置路径                          | 默认值 | 作用                                   |
-| --------------------------------- | ------ | -------------------------------------- |
-| `tgt_function.lambda_ES_high`     | 1000   | n > pixel_high 时 ES 权重              |
-| `tgt_function.lambda_ES_low`      | 5000   | n < pixel_low 时 ES 权重               |
-| `tgt_function.lambda_LS_high`     | 5      | n > pixel_high 时景观权重              |
-| `tgt_function.lambda_LS_low`      | 1      | n < pixel_low 时景观权重               |
-| `tgt_function.pixel_high`         | 6000   | λ 分段上界                             |
-| `tgt_function.pixel_low`          | 300    | λ 分段下界                             |
-| `change_score.inside_reward_coef` | 10     | 变化区域落入 pred_diff 内的奖励倍率    |
-| `landscape.pure_base`             | 0.3    | pure_score 基准权重                    |
-| `landscape.pure_change`           | 0.2    | pure_score 随 change_ratio 缩放系数    |
-| `ablation.disable_change_score`   | false  | 屏蔽 change_score 项（无引导消融实验） |
+| 配置路径                          | 默认值     | 作用                                   |
+| --------------------------------- | ---------- | -------------------------------------- |
+| `tgt_function.lambda_ES_high`     | 200000     | n > pixel_high 时 ES 权重（λ×200）     |
+| `tgt_function.lambda_ES_low`      | 1000000    | n < pixel_low 时 ES 权重（λ×200）      |
+| `tgt_function.lambda_LS_high`     | 1000       | n > pixel_high 时景观权重（λ×200）     |
+| `tgt_function.lambda_LS_low`      | 200        | n < pixel_low 时景观权重（λ×200）      |
+| `tgt_function.pixel_high`         | 2000       | λ 分段上界                             |
+| `tgt_function.pixel_low`          | 300        | λ 分段下界                             |
+| `change_score.inside_reward_coef` | 10         | 变化区域落入 pred_diff 内的奖励倍率    |
+| `landscape.pure_base`             | 0.3        | pure_score 基准权重                    |
+| `landscape.pure_change`           | 0.2        | pure_score 随 change_ratio 缩放系数    |
+| `ablation.quantity_penalty_C`     | 27000000   | B 组纯面积惩罚系数（λ×200 下重标定）   |
+| `ablation.disable_change_score`   | false      | 屏蔽 change_score 项（无引导消融实验） |
 
 ## 与其他模块的协作
 

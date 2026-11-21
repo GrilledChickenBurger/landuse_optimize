@@ -46,7 +46,7 @@ ALL_LU_LABELS_DICT = {
 }
 ALL_ES_TYPES = ["food", "carbon", "water", "culture"]
 ALL_ES_TYPES_DICT = {
-    "food": "粮食生产",
+    "food": "粮食供给",
     "carbon": "碳储量",
     "water": "水源涵养",
     "culture": "文化服务",

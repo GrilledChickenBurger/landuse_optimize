@@ -1,0 +1,203 @@
+# 随机优化算法运行配置文件 (SA 消融 A/B/C 并行分片隔离副本)
+device:
+  use_gpu: true
+
+data:
+  root: "_data/optimize_data"
+  shape: [1, 128, 128] # [通道数, 高度, 宽度]
+  factor_list: ["DEM", "DL", "GDP", "RK"] # 驱动因子列表
+  es_list: ["RAIN", "NJW", "ZSL", "PODU", "WATER", "CITY", "GD"] # 生态系统服务数据列表
+  year: "15" # 基准年份
+  lu_labels:
+    [
+      0,
+      11,
+      12,
+      21,
+      22,
+      23,
+      24,
+      31,
+      32,
+      33,
+      41,
+      42,
+      43,
+      45,
+      46,
+      51,
+      52,
+      53,
+      65,
+      66,
+    ]
+  maxent_model_path: "checkpoints/maxent-model_sklearn_{year}_ablation.ela" # maxent模型路径
+  shuffle: false # 是否打乱数据
+  batch_size: 1 # 批次大小
+
+model:
+  type: "transunet" # 模型类型, 需与 trainConfig.yaml 的 training.model_name 一致: attunet, unet, fcn, segformer, transunet, convlstm, cgan, vit, swin
+  model_path: "checkpoints/transunet/20261009_042543/best_model.pth" # 预训练模型路径
+  segformer:
+    dims: [32, 64, 160, 256]
+    heads: [1, 2, 5, 8]
+    ff_expansion: [4, 4, 4, 4]
+    reduction_ratio: [8, 4, 2, 1]
+    num_layers: 2
+    decoder_dim: 128
+  transunet:
+    img_size: 128
+    up_type: "dysample"
+    fusion_type: "cross_scale"
+    use_m1: true
+
+  # 新增模型: 必须与 trainConfig.yaml 的 model.<type> 完全一致,
+  # 否则 Stage-2 会用默认值建网, 加载 checkpoint 时 state_dict 不匹配
+  convlstm:
+    filters: [64, 128, 256, 512]
+    kernel_size: 3
+    num_layers: 1
+    bias: true
+  cgan:
+    num_downs: 7
+    ngf: 64
+    norm: "batch"
+    use_dropout: false
+    output_activation: null
+  vit:
+    img_size: 128
+    patch_size: 8
+    dim: 384
+    depth: 12
+    heads: 6
+    mlp_ratio: 4.0
+    dropout: 0.0
+    attn_dropout: 0.0
+    decoder_dim: 256
+  swin:
+    img_size: 128
+    patch_size: 4
+    embed_dim: 96
+    depths: [2, 2, 6, 2]
+    num_heads: [3, 6, 12, 24]
+    window_size: 7
+    mlp_ratio: 4.0
+    drop_path_rate: 0.1
+    decoder_dim: 256
+
+runner: # 随机优化算法通用参数
+  type: "SA" # 优化器类型，目前支持 "SA" (模拟退火) "GA" (遗传算法)
+  use_landscape: true # 是否使用景观破碎化约束
+  optimize_num: -1 # 优化样本数量
+  scenario: "all" # scenario类型: ["default", "enterprise", "farmer", "tourist"], all表示所有scenario
+  weight: # 不同scenario对应的权重配置
+    default: { "food": 0.25, "carbon": 0.25, "water": 0.25, "culture": 0.25 }
+    enterprise: { "food": 0.0, "carbon": 0.5, "water": 0.5, "culture": 0.0 }
+    farmer: { "food": 0.8, "carbon": 0.1, "water": 0.1, "culture": 0.0 }
+    # tourist: {'food':0.0, 'carbon':0.1, 'water':0.2, 'culture':0.7}
+    tourist: { "food": 0.0, "carbon": 0.0, "water": 0.0, "culture": 1.0 }
+  common_params:
+    carbon_pool_path: "libs/carbon_pool.csv" # 碳库数据路径
+    maxent_model_path: "checkpoints/maxent-model_sklearn_{year}_ablation.ela" # maxent模型路径, 需与data.maxent_model_path一致
+    frg_model_path: "libs/frg_model.fca" # 破碎化模型路径
+    maxent_list: ["CITY", "DL", "LU", "PODU", "WATER"] # Maxent模型输入变量
+    valid_sample_prob: 0.8 # 受控采样: 以 p 在有效区域内生成矩形(必中), 1-p 全图单次采样(不合法则空 move)
+
+SA: # 模拟退火参数
+  T_start: 100 # 初始温度
+  T_end: 10 # 终止温度
+  cooling_rate: 0.9995 # 降温率
+  chain_length: 10 # 标准 SA: 每个温度层的 Markov 链长度(内循环步数)
+  max_noimprove_iter: 1000 # 最大无改进迭代次数
+  max_beststuck_iter: 3000 # 最优解停滞阈值
+
+  print_frequency: 100 # 每n步打印一次输出
+  visualize_frequency: 500 # 每n步可视化一次输出
+  # ES_list: ["RAIN", "NJW", "ZSL", "PODU", "WATER", "CITY", "GD"]
+  # ES_1: ['RAIN','NJW','PODU','WATER','CITY','GD']
+  # ES_2: ['RAIN','ZSL']
+  performance: true # 是否记录性能指标
+  save_path: "results/SA" # 结果保存目录
+
+GA:
+  ori_pop_size: 20 # 初始种群大小
+  final_pop_size: 8 # 最终种群大小
+  max_gen: 2000 # 最大迭代次数
+  max_noimprove_gen: 80 # 最大无改进迭代次数
+  max_beststuck_gen: 300 # 最优解停滞阈值
+  crossover_rate: 0.8 # 交叉率
+  mutation_rate: 1.0 # 变异率
+  scale_ratio: [0.2, 0.5, 0.3] # 初始化种群时的尺度比例:[small,mid,large]
+
+  print_frequency: 10 # 每n步打印一次输出
+  visualize_frequency: 200 # 每n步可视化一次输出
+  performance: true # 是否记录性能指标
+  save_path: "results/GA" # 结果保存目录
+  strategy:
+    "parent_pool": "all"
+    "elite_ratio_for_pool": 0.2 # 父本来源的前20%
+    "parent_selection": "tournament"
+    "tournament_k": 2
+    "elite_ratio": 0.1
+    "non_crossover_handling": "copy"
+    "elite_mutation": False
+
+output:
+  save_result: false # 是否保存优化结果
+  save_path: "results/optimize_data" # 结果保存目录
+
+
+# # 实验配置列表
+# experiments = [
+#     {   # GA1 (基准)
+#         'parent_pool': 'all',
+#         'parent_selection': 'roulette',
+#         'elite_ratio': 0.1,
+#         'non_crossover_handling': 'copy',
+#         'elite_mutation': False
+#     },
+#     {   # GA2
+#         'parent_pool': 'all',
+#         'parent_selection': 'tournament',
+#         'tournament_k': 2,
+#         'elite_ratio': 0.1,
+#         'non_crossover_handling': 'copy',
+#         'elite_mutation': False
+#     },
+#     {   # GA3
+#         'parent_pool': 'elite',
+#         'elite_ratio_for_pool': 0.2,   # 父本来源的前20%
+#         'parent_selection': 'roulette',
+#         'elite_ratio': 0.1,
+#         'non_crossover_handling': 'copy',
+#         'elite_mutation': False
+#     },
+#     {   # GA4
+#         'parent_pool': 'all',
+#         'parent_selection': 'roulette',
+#         'elite_ratio': 0.0,
+#         'non_crossover_handling': 'copy',
+#         'elite_mutation': False
+#     },
+#     {   # GA5
+#         'parent_pool': 'all',
+#         'parent_selection': 'roulette',
+#         'elite_ratio': 0.5,
+#         'non_crossover_handling': 'copy',
+#         'elite_mutation': False
+#     },
+#     {   # GA6
+#         'parent_pool': 'all',
+#         'parent_selection': 'roulette',
+#         'elite_ratio': 0.1,
+#         'non_crossover_handling': 'copy_mutate',
+#         'elite_mutation': False
+#     },
+#     {   # GA7
+#         'parent_pool': 'all',
+#         'parent_selection': 'roulette',
+#         'elite_ratio': 0.1,
+#         'non_crossover_handling': 'copy',
+#         'elite_mutation': True
+#     }
+# ]
